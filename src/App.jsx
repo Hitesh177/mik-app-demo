@@ -8,6 +8,7 @@ import Toast from './components/Toast';
 import WhatsAppButton from './components/WhatsAppButton';
 import PromoPopup from './components/PromoPopup';
 import ScrollToTopButton from './components/ScrollToTopButton';
+import { Analytics } from '@vercel/analytics/react';
 
 import HomePage from './pages/HomePage';
 import CartPage from './pages/CartPage';
@@ -94,6 +95,7 @@ export default function App() {
               <Toast />
               <PromoPopup />
               <BrowserRouter>
+                <Analytics />
                 <AnimatedRoutes />
                 <WhatsAppButton />
                 <ScrollToTopButton />

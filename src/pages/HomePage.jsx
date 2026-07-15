@@ -9,7 +9,7 @@ import BannerCarousel from '../components/BannerCarousel';
 import MarqueeStrip from '../components/MarqueeStrip';
 import Testimonials from '../components/Testimonials';
 import SeoHead from '../components/SeoHead';
-import { CATEGORIES } from '../data/mockData';
+import { CATEGORIES, PRODUCTS } from '../data/mockData';
 import { BLOG_POSTS } from '../data/blogPosts';
 import { useAdmin } from '../context/AdminContext';
 import { ChevronRight, Flame, Tag, TrendingUp, Search, Sparkles, MapPin, BookOpen } from 'lucide-react';
@@ -267,7 +267,7 @@ function CategorySection({ category, products, onViewAll }) {
 export default function HomePage() {
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
-  const { products, offers } = useAdmin();
+  const { offers } = useAdmin();
   const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
   const seoDescription = 'Shop authentic Indian groceries in Taiwan with fast delivery, live product pages, and easy browsing for spices, dal, ready-to-eat meals, rice, oils, and more.';
 
@@ -275,7 +275,7 @@ export default function HomePage() {
 
   // When searching, show a flat filtered list instead of sections
   const searchResults = search.trim()
-    ? products.filter(p =>
+    ? PRODUCTS.filter(p =>
         p.name_en.toLowerCase().includes(search.toLowerCase()) ||
         p.name_zh.includes(search)
       )
@@ -298,7 +298,7 @@ export default function HomePage() {
         }}
       />
 
-      <Header onSearchChange={handleSearchChange} searchValue={search} searchIndex={products} />
+      <Header onSearchChange={handleSearchChange} searchValue={search} searchIndex={PRODUCTS} />
 
       {/* Marquee strip */}
       {!search.trim() && <MarqueeStrip />}
@@ -307,7 +307,7 @@ export default function HomePage() {
       {!search.trim() && <BannerCarousel offers={offers} />}
 
       {/* Deals of the Day */}
-      {!search.trim() && <DealsOfDay products={products} />}
+      {!search.trim() && <DealsOfDay products={PRODUCTS} />}
 
       {/* Search results OR browse experience */}
       {searchResults ? (
@@ -341,7 +341,7 @@ export default function HomePage() {
               <CategorySection
                 key={category.id}
                 category={category}
-                products={products}
+                products={PRODUCTS}
                 onViewAll={(catId) => navigate(`/category/${catId}`)}
               />
             ))}
@@ -375,7 +375,7 @@ export default function HomePage() {
       {/* Testimonials */}
       {!search.trim() && <Testimonials />}
 
-      {!search.trim() && <PopularSearches products={products} />}
+      {!search.trim() && <PopularSearches products={PRODUCTS} />}
 
       {!search.trim() && <BlogHighlights />}
 

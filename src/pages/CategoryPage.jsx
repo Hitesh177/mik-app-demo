@@ -6,8 +6,7 @@ import ProductCard from '../components/ProductCard';
 import Footer from '../components/Footer';
 import BottomNav from '../components/BottomNav';
 import SeoHead from '../components/SeoHead';
-import { CATEGORIES } from '../data/mockData';
-import { useAdmin } from '../context/AdminContext';
+import { PRODUCTS, CATEGORIES } from '../data/mockData';
 
 const SORT_OPTIONS = [
   { value: 'default',    label: 'Default' },
@@ -22,14 +21,12 @@ export default function CategoryPage() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('default');
   const [inStockOnly, setInStockOnly] = useState(false);
-  const { products: liveProducts } = useAdmin();
-
   const category = CATEGORIES.find(c => c.id === categoryId);
   const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
   const categoryName = category ? category.name : categoryId;
 
   const products = useMemo(() => {
-    let list = liveProducts.filter(p => p.category === categoryId);
+    let list = PRODUCTS.filter(p => p.category === categoryId);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(p =>
@@ -42,7 +39,7 @@ export default function CategoryPage() {
     if (sort === 'price-desc') list = [...list].sort((a, b) => b.price - a.price);
     if (sort === 'hot') list = [...list].sort((a, b) => (b.badge === 'Hot' ? 1 : 0) - (a.badge === 'Hot' ? 1 : 0));
     return list;
-  }, [categoryId, liveProducts, search, sort, inStockOnly]);
+  }, [categoryId, search, sort, inStockOnly]);
 
   const handleSearchChange = (val) => setSearch(val);
   const seoDescription = `Browse ${categoryName} in Taiwan with live product photos, fast delivery, and Indian grocery essentials for modern shoppers in Taipei and beyond.`;
@@ -71,7 +68,7 @@ export default function CategoryPage() {
         }}
       />
 
-      <Header onSearchChange={handleSearchChange} searchValue={search} searchIndex={liveProducts} />
+      <Header onSearchChange={handleSearchChange} searchValue={search} searchIndex={PRODUCTS} />
 
       {/* Category header */}
       <div className="max-w-6xl w-full mx-auto px-4 pt-4 pb-2">
