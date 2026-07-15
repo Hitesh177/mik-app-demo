@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { PRODUCTS as MOCK_PRODUCTS } from '../data/mockData';
 
 const AdminContext = createContext(null);
 
@@ -52,7 +53,12 @@ export function AdminProvider({ children }) {
           if (mounted) setIsLoggedIn(false);
         }
       } catch {
-        // Keep the app usable even if the backend is temporarily unavailable.
+        // Backend unavailable — fall back to mock data so the storefront still works
+        if (mounted) {
+          setProducts([...MOCK_PRODUCTS]);
+          setOrders([]);
+          setOffers([]);
+        }
       } finally {
         if (mounted) setIsReady(true);
       }
