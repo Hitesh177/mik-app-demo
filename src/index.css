@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #f8f8f8;
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Toast slide-up animation */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.animate-slide-up { animation: slide-up 0.25s ease-out forwards; }
+
+/* Modal slide-up */
+@keyframes slide-up-modal {
+  from { opacity: 0; transform: translateY(40px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up-modal { animation: slide-up-modal 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+
+/* Cart bounce */
+@keyframes cart-bounce {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  25%  { transform: scale(1.35) rotate(-8deg); }
+  50%  { transform: scale(1.2) rotate(5deg); }
+  75%  { transform: scale(1.1) rotate(-3deg); }
+}
+.animate-cart-bounce { animation: cart-bounce 0.5s ease-out; }
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+
+/* Marquee scrolling */
+@keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+.animate-marquee { animation: marquee 22s linear infinite; }
+
+/* Page fade-in */
+@keyframes page-fade {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-page-fade { animation: page-fade 0.35s ease-out; }
+
+/* Confetti fall */
+@keyframes confetti-fall {
+  0%   { transform: translateY(-10px) rotate(0deg);   opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+}
+
+/* Image fade-in */
+@keyframes img-fade { from { opacity: 0; } to { opacity: 1; } }
+.animate-img-fade { animation: img-fade 0.4s ease-out forwards; }
+
+/* Hide scrollbar but keep scroll functionality */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Dark mode — CSS invert trick, re-invert images */
+.dark-mode { filter: invert(0.88) hue-rotate(180deg); background-color: #111; }
+.dark-mode img { filter: invert(1) hue-rotate(180deg); }
+
+@layer components {
+  .btn-primary {
+    @apply bg-green-700 text-white font-semibold py-3 px-6 rounded-xl active:scale-95 transition-transform;
+  }
+  .btn-outline {
+    @apply border border-gray-300 text-gray-700 font-medium py-2 px-4 rounded-lg hover:bg-gray-50 transition-colors;
+  }
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-gray-100;
+  }
+  .input-field {
+    @apply w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent;
+  }
+}
