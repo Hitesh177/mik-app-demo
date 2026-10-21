@@ -44,6 +44,43 @@ def rows_to_dicts(rows):
     return [dict(row) for row in rows]
 
 
+def save_wix_session(conn, sid, kind, payload, expires_at):
+    conn.execute(
+        '''
+        INSERT INTO wix_sessions(sid, kind, payload, created_at, expires_at)
+        VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(sid) DO UPDATE SET
+            kind = excluded.kind,
+            payload = excluded.payload,
+            expires_at = excluded.expires_at
+        ''',
+        (sid, kind, payload, utc_now_iso(), expires_at),
+    )
+    conn.commit()
+    return {'saved': True}
+
+
+def get_wix_session(conn, sid, kind):
+    row = conn.execute(
+        'SELECT payload, expires_at FROM wix_sessions WHERE sid = ? AND kind = ?',
+        (sid, kind),
+    ).fetchone()
+    if not row:
+        return None
+    expires_at = dt.datetime.fromisoformat(str(row['expires_at']).replace('Z', '+00:00'))
+    if expires_at <= dt.datetime.now(dt.timezone.utc):
+        conn.execute('DELETE FROM wix_sessions WHERE sid = ?', (sid,))
+        conn.commit()
+        return None
+    return {'payload': row['payload'], 'expires_at': row['expires_at']}
+
+
+def delete_wix_session(conn, sid):
+    conn.execute('DELETE FROM wix_sessions WHERE sid = ?', (sid,))
+    conn.commit()
+    return {'deleted': True}
+
+
 def slugify(value):
     text = str(value or '').lower().strip()
     chars = []
@@ -253,6 +290,14 @@ def ensure_schema(conn):
             created_at TEXT NOT NULL,
             refresh_expires_at TEXT NOT NULL,
             revoked_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS wix_sessions (
+            sid TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS customer_point_transactions (
@@ -1627,6 +1672,9 @@ def normalize_product(product, fallback_id=None):
         f'{name_en} is available across Taiwan with quick delivery and trusted Indian grocery support. '
         f'Ideal for home cooking, pantry stocking, and repeat orders from customers searching for Indian groceries near them in Taiwan.{search_hint}'
     )
+    image_url = str(product.get('image_url') or '').strip() or None
+    if image_url and not image_url.startswith('/'):
+        raise ValueError('Product image must use a local path beginning with /')
     return {
         'id': str(product.get('id') or fallback_id or uuid.uuid4()),
         'name_en': name_en,
@@ -1640,7 +1688,7 @@ def normalize_product(product, fallback_id=None):
         'price': int(product.get('price') or 0),
         'category': category,
         'stock': int(product.get('stock') or 0),
-        'image_url': product.get('image_url'),
+        'image_url': image_url,
         'badge': product.get('badge'),
         'created_at': str(product.get('created_at') or utc_now_iso()),
     }
@@ -1936,6 +1984,22 @@ def main():
           )
       elif action == 'revoke_customer_session':
           result = revoke_customer_session(conn, str(data.get('sid') or ''))
+      elif action == 'save_wix_session':
+          result = save_wix_session(
+              conn,
+              str(data.get('sid') or ''),
+              str(data.get('kind') or ''),
+              str(data.get('payload') or ''),
+              str(data.get('expires_at') or utc_now_iso()),
+          )
+      elif action == 'get_wix_session':
+          result = get_wix_session(
+              conn,
+              str(data.get('sid') or ''),
+              str(data.get('kind') or ''),
+          )
+      elif action == 'delete_wix_session':
+          result = delete_wix_session(conn, str(data.get('sid') or ''))
       elif action == 'create_order':
           result = create_order(conn, data)
       elif action == 'update_order_status':

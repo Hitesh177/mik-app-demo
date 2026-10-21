@@ -1,13 +1,16 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { PRODUCTS as MOCK_PRODUCTS } from '../data/mockData';
+import { CATEGORIES as MOCK_CATEGORIES, PRODUCTS as MOCK_PRODUCTS } from '../data/mockData';
+import { withLegacyProducts } from '../data/legacyProducts';
 
 const AdminContext = createContext(null);
+const WIX_CATALOG_REFRESH_MS = 5 * 60 * 1000;
 
 export function AdminProvider({ children }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [orders, setOrders] = useState([]);
   const [offers, setOffers] = useState([]);
   const [analytics, setAnalytics] = useState(null);
@@ -31,14 +34,17 @@ export function AdminProvider({ children }) {
         ]);
 
         if (!mounted) return;
-        setProducts(Array.isArray(bootstrapData.products) ? bootstrapData.products : []);
+        setProducts(withLegacyProducts(Array.isArray(bootstrapData.products) ? bootstrapData.products : []));
+        setCategories(Array.isArray(bootstrapData.catalog?.collections) ? bootstrapData.catalog.collections.filter(item => item.visible !== false) : []);
         setOrders(Array.isArray(bootstrapData.orders) ? bootstrapData.orders : []);
         setOffers(Array.isArray(bootstrapData.offers) ? bootstrapData.offers : []);
         try {
-          const [analyticsData, auditData] = await Promise.all([
+          const [ordersData, analyticsData, auditData] = await Promise.all([
+            api.getOrders(),
             api.getAdminAnalytics(),
             api.getAdminAuditLogs(10),
           ]);
+          setOrders(Array.isArray(ordersData) ? ordersData : []);
           setAnalytics(analyticsData || null);
           setAuditLogs(Array.isArray(auditData?.logs) ? auditData.logs : []);
         } catch {
@@ -55,7 +61,16 @@ export function AdminProvider({ children }) {
       } catch {
         // Backend unavailable — fall back to mock data so the storefront still works
         if (mounted) {
-          setProducts([...MOCK_PRODUCTS]);
+          setProducts(withLegacyProducts(MOCK_PRODUCTS));
+          setCategories(MOCK_CATEGORIES.filter(item => item.id !== 'all').map(item => ({
+            id: item.id,
+            name: item.name.replace(/^[^a-zA-Z]+/, ''),
+            slug: item.id,
+            path: `/category/${item.id}`,
+            image_url: '',
+            visible: true,
+            product_count: MOCK_PRODUCTS.filter(product => product.category === item.id).length,
+          })));
           setOrders([]);
           setOffers([]);
         }
@@ -64,9 +79,23 @@ export function AdminProvider({ children }) {
       }
     }
 
+    async function refreshCatalog() {
+      try {
+        const bootstrapData = await api.getBootstrap();
+        if (!mounted) return;
+        setProducts(withLegacyProducts(Array.isArray(bootstrapData.products) ? bootstrapData.products : []));
+        setCategories(Array.isArray(bootstrapData.catalog?.collections) ? bootstrapData.catalog.collections.filter(item => item.visible !== false) : []);
+        setOffers(Array.isArray(bootstrapData.offers) ? bootstrapData.offers : []);
+      } catch {
+        // Keep the last successful Wix snapshot during a temporary outage.
+      }
+    }
+
     bootstrap();
+    const catalogRefresh = window.setInterval(refreshCatalog, WIX_CATALOG_REFRESH_MS);
     return () => {
       mounted = false;
+      window.clearInterval(catalogRefresh);
     };
   }, []);
 
@@ -170,6 +199,7 @@ export function AdminProvider({ children }) {
       login,
       logout,
       products,
+      categories,
       addProduct,
       updateProduct,
       deleteProduct,

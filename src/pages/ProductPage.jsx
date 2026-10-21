@@ -1,15 +1,16 @@
 import { useMemo } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BadgePercent, Heart, Package, ShieldCheck, ShoppingBag, Star, Truck } from 'lucide-react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, BadgePercent, Heart, ShieldCheck, ShoppingBag, Star, Truck } from 'lucide-react';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import BottomNav from '../components/BottomNav';
 import ProductCard from '../components/ProductCard';
 import SeoHead from '../components/SeoHead';
 import { useAdmin } from '../context/AdminContext';
+import { categoryPath } from '../lib/storeRoutes';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
-import { CATEGORIES } from '../data/mockData';
+import SmartImage from '../components/SmartImage';
 
 function slugify(value) {
   return String(value || '')
@@ -22,15 +23,16 @@ function slugify(value) {
 
 function getRating(id) {
   const ratings = [4.2, 4.5, 4.8, 3.9, 4.6, 4.1, 4.7, 4.3, 4.4, 3.8];
-  return ratings[parseInt(String(id || '0'), 10) % ratings.length];
+  const index = Array.from(String(id || '0'))
+    .reduce((total, character) => total + character.charCodeAt(0), 0) % ratings.length;
+  return ratings[index];
 }
 
 function money(value) {
   return `NT$${Number(value || 0).toLocaleString()}`;
 }
 
-function buildFallbackContent(product) {
-  const categoryName = CATEGORIES.find(c => c.id === product.category)?.name?.replace(/^[^a-zA-Z]+/, '') || product.category;
+function buildFallbackContent(product, categoryName) {
   const isDal = product.category === 'dal-pulses' || /chana|dal|lentil|rajma|moong/i.test(product.name_en || '');
   const searchPhrase = isDal
     ? 'If you are searching for chana dal near me in Taiwan, this product page is designed to help customers find the right dal quickly.'
@@ -46,8 +48,9 @@ function buildFallbackContent(product) {
 
 export default function ProductPage() {
   const { productSlug } = useParams();
+  const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { products } = useAdmin();
+  const { categories, products } = useAdmin();
   const { addItem, cart } = useCart();
   const { toggle, isWished } = useWishlist();
 
@@ -63,13 +66,20 @@ export default function ProductPage() {
       .slice(0, 8);
   }, [product, products]);
 
-  const seo = product ? buildFallbackContent(product) : null;
+  const category = product
+    ? categories.find(item => item.id === product.primary_collection_id || item.slug === product.category)
+    : null;
+  const categoryName = category?.name || product?.collection_names?.[0] || product?.category || '';
+  const seo = product ? buildFallbackContent(product, categoryName) : null;
   const canonical = typeof window !== 'undefined' && product
-    ? `${window.location.origin}/product/${product.seo_slug || slugify(product.name_en) || product.id}`
+    ? `${window.location.origin}${window.location.pathname}`
     : '';
   const rating = product ? getRating(product.id) : 0;
   const wished = product ? isWished(product.id) : false;
   const cartItem = product ? cart.find(i => i.id === product.id) : null;
+  const productCategoryPath = product
+    ? `${pathname.startsWith('/zh/') ? '/zh' : ''}${category?.path || categoryPath(product.category)}`
+    : '/';
 
   const jsonLd = product ? [
     {
@@ -108,8 +118,8 @@ export default function ProductPage() {
         {
           '@type': 'ListItem',
           position: 2,
-          name: product.category,
-          item: `${typeof window !== 'undefined' ? window.location.origin : ''}/category/${product.category}`,
+          name: categoryName,
+          item: `${typeof window !== 'undefined' ? window.location.origin : ''}${productCategoryPath}`,
         },
         {
           '@type': 'ListItem',
@@ -139,8 +149,6 @@ export default function ProductPage() {
     );
   }
 
-  const categoryName = CATEGORIES.find(c => c.id === product.category)?.name || product.category;
-
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <SeoHead
@@ -160,7 +168,7 @@ export default function ProductPage() {
             <ArrowLeft size={16} />
             Back
           </button>
-          <Link to={`/category/${product.category}`} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-1.5 rounded-full">
+          <Link to={productCategoryPath} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-1.5 rounded-full">
             {categoryName}
           </Link>
         </div>
@@ -169,7 +177,7 @@ export default function ProductPage() {
           <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden">
             <div className="aspect-[4/3] bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
               {product.image_url ? (
-                <img src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-4" />
+                <SmartImage src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-4" sizes="(max-width: 1024px) 100vw, 55vw" eager />
               ) : (
                 <ShoppingBag size={72} className="text-gray-300" />
               )}
@@ -193,14 +201,10 @@ export default function ProductPage() {
               <span className="text-sm text-gray-500">{rating.toFixed(1)} rating</span>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div>
               <div>
                 <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Price</p>
                 <p className="text-3xl font-black text-gray-900">{money(product.price)}</p>
-              </div>
-              <div className="ml-auto text-right">
-                <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Stock</p>
-                <p className={`text-sm font-bold ${product.stock > 0 ? 'text-green-700' : 'text-red-600'}`}>{product.stock > 0 ? `${product.stock} available` : 'Out of stock'}</p>
               </div>
             </div>
 
@@ -241,42 +245,16 @@ export default function ProductPage() {
           </div>
         </section>
 
-        <section className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6">
-          <div className="bg-white rounded-3xl border border-gray-100 p-6 space-y-4">
-            <h2 className="text-lg font-bold text-gray-900">Product Details</h2>
-            <p className="text-sm text-gray-600 leading-7 whitespace-pre-line">{seo.content}</p>
-            <div className="prose prose-sm max-w-none text-gray-600">
-              <p>
-                {product.name_en} is searchable as part of our Taiwan-focused Indian grocery catalog.
-                That means shoppers looking for products like this can land on a page that clearly names the item, the category, and the local delivery promise.
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-3xl border border-gray-100 p-6 space-y-4">
-            <h2 className="text-lg font-bold text-gray-900">Why shoppers find this page useful</h2>
-            <ul className="space-y-2 text-sm text-gray-600">
-              <li className="flex gap-2"><Package size={15} className="text-green-700 flex-shrink-0 mt-0.5" /> Clear product name, category, and price for search engines and shoppers.</li>
-              <li className="flex gap-2"><Truck size={15} className="text-green-700 flex-shrink-0 mt-0.5" /> Delivery-focused copy for Taiwan searches.</li>
-              <li className="flex gap-2"><Star size={15} className="text-green-700 flex-shrink-0 mt-0.5" /> Unique metadata and structured data for rich results.</li>
-              <li className="flex gap-2"><BadgePercent size={15} className="text-green-700 flex-shrink-0 mt-0.5" /> Internal links back to category pages and related products.</li>
-            </ul>
-            <div className="rounded-2xl bg-green-50 p-4">
-              <p className="text-xs uppercase tracking-wide text-green-700 font-bold">Search focus</p>
-              <p className="text-sm text-green-900 mt-1">
-                {product.category === 'dal-pulses'
-                  ? 'This dal page is written for searches like “chana dal near me” and related Indian grocery queries in Taiwan.'
-                  : `This page is written for shoppers searching for ${product.name_en} and similar Indian grocery items in Taiwan.`}
-              </p>
-            </div>
-          </div>
+        <section className="bg-white rounded-3xl border border-gray-100 p-6 space-y-4">
+          <h2 className="text-lg font-bold text-gray-900">Product Details</h2>
+          <p className="text-sm text-gray-600 leading-7 whitespace-pre-line">{seo.content}</p>
         </section>
 
         {related.length > 0 && (
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-gray-900">Related products</h2>
-              <Link to={`/category/${product.category}`} className="text-sm text-green-700 font-semibold">See all</Link>
+              <Link to={productCategoryPath} className="text-sm text-green-700 font-semibold">See all</Link>
             </div>
             <div className="overflow-x-auto no-scrollbar">
               <div className="flex gap-3 w-max">

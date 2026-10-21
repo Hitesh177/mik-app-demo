@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { X, Star, Plus, Minus, Heart, ShoppingBag } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
+import SmartImage from './SmartImage';
 
 const RATINGS = [4.2, 4.5, 4.8, 3.9, 4.6, 4.1, 4.7, 4.3, 4.4, 3.8];
 const CATEGORY_DESCS = {
@@ -47,7 +48,9 @@ export default function QuickViewModal({ product, onClose }) {
   const { toggle, isWished } = useWishlist();
   const cartItem = cart.find(i => i.id === product.id);
   const wished = isWished(product.id);
-  const rating = RATINGS[parseInt(product.id, 10) % RATINGS.length];
+  const ratingIndex = Array.from(String(product.id || '0'))
+    .reduce((total, character) => total + character.charCodeAt(0), 0) % RATINGS.length;
+  const rating = RATINGS[ratingIndex];
   const desc = CATEGORY_DESCS[product.category] || 'Premium quality imported directly from India.';
   const isLowStock = product.stock > 0 && product.stock <= 5;
   const isOutOfStock = product.stock === 0;
@@ -92,7 +95,7 @@ export default function QuickViewModal({ product, onClose }) {
         {/* Image */}
         <div className="h-56 bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center">
           {product.image_url ? (
-            <img src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-4" />
+            <SmartImage src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-4" sizes="448px" eager />
           ) : (
             <ShoppingBag size={64} className="text-gray-300" />
           )}

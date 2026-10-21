@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-labelledby="title description">
+  <title id="title">MIK Store product image placeholder</title>
+  <description id="description">Product image coming soon</description>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f0fdf4"/>
+      <stop offset="1" stop-color="#dcfce7"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="600" rx="56" fill="url(#background)"/>
+  <circle cx="300" cy="245" r="92" fill="#15803d"/>
+  <path d="M248 274h104l-9 51h-86z" fill="#fff" opacity=".95"/>
+  <path d="M267 238c0-23 14-39 33-39s33 16 33 39" fill="none" stroke="#fff" stroke-width="16" stroke-linecap="round"/>
+  <text x="300" y="405" text-anchor="middle" font-family="system-ui, sans-serif" font-size="46" font-weight="700" fill="#14532d">MIK Store</text>
+  <text x="300" y="452" text-anchor="middle" font-family="system-ui, sans-serif" font-size="24" fill="#166534">Product image coming soon</text>
+</svg>

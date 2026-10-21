@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Plus, Minus, Heart, Star, Bell, BellOff } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
 import QuickViewModal from './QuickViewModal';
+import SmartImage from './SmartImage';
 
 const CATEGORY_COLORS = {
   'fresh-frozen':    'from-sky-50 to-blue-50',
@@ -56,11 +57,13 @@ const BADGE_STYLES = {
 
 // Deterministic rating from product id
 const RATINGS = [4.2, 4.5, 4.8, 3.9, 4.6, 4.1, 4.7, 4.3, 4.4, 3.8];
-const getRating = (id) => RATINGS[parseInt(id, 10) % RATINGS.length];
+const deterministicIndex = (id, length) => Array.from(String(id || '0'))
+  .reduce((total, character) => total + character.charCodeAt(0), 0) % length;
+const getRating = (id) => RATINGS[deterministicIndex(id, RATINGS.length)];
 
 // Deterministic "sold today" count for hot products
 const SOLD_COUNTS = [12, 27, 8, 34, 19, 41, 15, 23, 7, 31];
-const getSoldCount = (id) => SOLD_COUNTS[parseInt(id, 10) % SOLD_COUNTS.length];
+const getSoldCount = (id) => SOLD_COUNTS[deterministicIndex(id, SOLD_COUNTS.length)];
 
 // Products to mark as New (by ID)
 const NEW_IDS = new Set(['4', '12', '22', '38', '54', '67']);
@@ -78,6 +81,7 @@ function trackViewed(product) {
 }
 
 export default function ProductCard({ product, compact = false }) {
+  const { pathname } = useLocation();
   const { cart, addItem, updateQty } = useCart();
   const { toggle, isWished } = useWishlist();
   const [showModal, setShowModal] = useState(false);
@@ -85,6 +89,7 @@ export default function ProductCard({ product, compact = false }) {
   const [notified, setNotified] = useState(false);
 
   const cartItem = cart.find(i => i.id === product.id);
+  const hasRealPrice = Number.isFinite(Number(product.price)) && Number(product.price) > 0;
   const isOutOfStock = product.stock === 0;
   const isLowStock = product.stock > 0 && product.stock <= 5;
   const wished = isWished(product.id);
@@ -94,7 +99,10 @@ export default function ProductCard({ product, compact = false }) {
   const effectiveBadge = product.badge || (NEW_IDS.has(product.id) ? 'New' : null);
   const gradient = CATEGORY_COLORS[product.category] || 'from-gray-50 to-gray-100';
   const emoji = CATEGORY_EMOJIS[product.category] || '🛒';
-  const detailPath = `/product/${product.seo_slug || product.id}`;
+  const baseDetailPath = product.legacy_path || `/product-page/${product.seo_slug || product.id}`;
+  const detailPath = pathname.startsWith('/zh/') || pathname === '/zh'
+    ? `/zh${baseDetailPath}`
+    : baseDetailPath;
 
   const openModal = () => {
     trackViewed(product);
@@ -121,11 +129,10 @@ export default function ProductCard({ product, compact = false }) {
           {product.image_url ? (
             <>
               {!imgLoaded && <div className="absolute inset-0 skeleton" />}
-              <img
+              <SmartImage
                 src={product.image_url}
                 alt={product.name_en}
-                loading="lazy"
-                decoding="async"
+                sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 220px"
                 className={`w-full h-full object-contain p-2 transition-opacity duration-300 ${imgLoaded ? 'opacity-100' : 'opacity-0'}`}
                 onLoad={() => setImgLoaded(true)}
               />
@@ -184,7 +191,9 @@ export default function ProductCard({ product, compact = false }) {
           {compact ? (
             <div className="mt-auto pt-2 space-y-2">
               <div className="flex items-end justify-between gap-2">
-                <span className="text-sm font-bold text-gray-900 leading-none">NT${product.price}</span>
+                <span className="text-sm font-bold text-gray-900 leading-none">
+                  {hasRealPrice ? `NT$${product.price}` : 'Price unavailable'}
+                </span>
                 {!isOutOfStock && cartItem && (
                   <span className="text-[9px] font-semibold text-green-700 bg-green-50 px-2 py-1 rounded-full">
                     In cart {cartItem.quantity}
@@ -192,7 +201,7 @@ export default function ProductCard({ product, compact = false }) {
                 )}
               </div>
 
-              {isOutOfStock ? (
+              {!hasRealPrice ? null : isOutOfStock ? (
                 <button
                   type="button"
                   onClick={() => setNotified(n => !n)}
@@ -235,7 +244,9 @@ export default function ProductCard({ product, compact = false }) {
             </div>
           ) : (
             <div className="mt-auto pt-2 flex items-center justify-between gap-2">
-              <span className="text-sm font-bold text-gray-900">NT${product.price}</span>
+              <span className="text-sm font-bold text-gray-900">
+                {hasRealPrice ? `NT$${product.price}` : 'Price unavailable'}
+              </span>
 
               <Link
                 to={detailPath}
@@ -246,7 +257,7 @@ export default function ProductCard({ product, compact = false }) {
                 Details
               </Link>
 
-              {isOutOfStock ? (
+              {!hasRealPrice ? null : isOutOfStock ? (
                 <button
                   type="button"
                   onClick={() => setNotified(n => !n)}

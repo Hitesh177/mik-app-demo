@@ -18,7 +18,7 @@ export default function Footer() {
               </div>
             </div>
             <p className="text-xs text-gray-500 leading-relaxed">
-              Authentic Indian groceries delivered island-wide in Taiwan. Quality products, free delivery.
+              Authentic Indian groceries delivered island-wide in Taiwan. Free delivery on orders over NT$4,000.
             </p>
             <div className="flex gap-3 mt-4">
               <a
@@ -58,8 +58,7 @@ export default function Footer() {
               <li><Link to="/account" className="hover:text-white transition-colors">My Account</Link></li>
               <li><Link to="/my-orders" className="hover:text-white transition-colors">My Orders</Link></li>
               <li><Link to="/blog" className="hover:text-white transition-colors">Blog & Guides</Link></li>
-              <li><Link to="/shipping" className="hover:text-white transition-colors">Shipping Info</Link></li>
-              <li><Link to="/returns" className="hover:text-white transition-colors">Returns Policy</Link></li>
+              <li><Link to="/shipping-returns" className="hover:text-white transition-colors">Shipping &amp; Returns</Link></li>
               <li><Link to="/contact" className="hover:text-white transition-colors">Contact Us</Link></li>
               <li><Link to="/faq" className="hover:text-white transition-colors">FAQ</Link></li>
             </ul>
@@ -75,7 +74,18 @@ export default function Footer() {
               </li>
               <li className="flex items-start gap-2 text-xs">
                 <MessageCircle size={13} className="mt-0.5 flex-shrink-0 text-green-500" />
-              <a href="https://wa.me/886912345678" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">WhatsApp us</a>
+                <a href="https://wa.me/886912345678" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">WhatsApp us</a>
+              </li>
+              <li className="flex items-start gap-2 text-xs">
+                <MessageCircle size={13} className="mt-0.5 flex-shrink-0 text-green-500" />
+                <a
+                  href="https://line.me/ti/p/@688vynca"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-gray-300 hover:text-white transition-colors"
+                >
+                  Customer Support on LINE
+                </a>
               </li>
               <li className="flex items-start gap-2 text-xs">
                 <Mail size={13} className="mt-0.5 flex-shrink-0 text-green-500" />
@@ -114,7 +124,7 @@ export default function Footer() {
           <p className="text-xs text-gray-600">© 2026 Mayur Indian Kitchen. All rights reserved.</p>
           <div className="flex gap-4 text-xs">
             <Link to="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
-            <Link to="/terms" className="hover:text-white transition-colors">Terms & Conditions</Link>
+            <Link to="/terms-conditions" className="hover:text-white transition-colors">Terms &amp; Conditions</Link>
             <Link to="/admin" className="hover:text-white transition-colors">Store Admin</Link>
           </div>
         </div>

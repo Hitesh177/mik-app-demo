@@ -1,13 +1,34 @@
 import { useMemo, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, ShoppingBag, Sparkles, Tag, UtensilsCrossed } from 'lucide-react';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import BottomNav from '../components/BottomNav';
 import ProductCard from '../components/ProductCard';
 import SeoHead from '../components/SeoHead';
+import WixRichContent from '../components/WixRichContent';
 import { useAdmin } from '../context/AdminContext';
 import { BLOG_POSTS, getBlogPost } from '../data/blogPosts';
+import { WIX_BLOG_POSTS, WIX_BLOG_POST_BY_PATH } from '../data/wixBlogPosts';
+
+function WixBlogCard({ post }) {
+  return (
+    <Link to={post.path} className="group block overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-xl">
+      <div className="aspect-[16/10] overflow-hidden bg-green-50">
+        {post.coverImage ? <img src={post.coverImage} alt={post.coverAlt || post.title} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" /> : null}
+      </div>
+      <div className="p-5">
+        <div className="flex items-center gap-2 text-xs font-semibold text-green-700">
+          <CalendarDays size={13} />
+          {post.minutesToRead} min read
+        </div>
+        <h3 className="mt-3 line-clamp-2 text-lg font-black leading-tight text-gray-950">{post.title}</h3>
+        <p className="mt-2 line-clamp-3 text-sm leading-6 text-gray-600">{post.excerpt}</p>
+        <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-green-700">Read article <ArrowRight size={14} /></span>
+      </div>
+    </Link>
+  );
+}
 
 function BlogCard({ post }) {
   return (
@@ -279,6 +300,79 @@ function PostView({ post, products, relatedPosts, searchValue, setSearchValue })
   );
 }
 
+function WixPostView({ post, products, searchValue, setSearchValue }) {
+  const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const canonical = siteUrl ? `${siteUrl}${post.path}` : undefined;
+  const blogPath = post.language === 'zh' ? '/zh/blog' : '/blog';
+  const relatedPosts = WIX_BLOG_POSTS
+    .filter(item => item.language === post.language && item.id !== post.id)
+    .slice(0, 3);
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.title,
+    description: post.description,
+    image: post.coverImage ? (siteUrl ? `${siteUrl}${post.coverImage}` : post.coverImage) : undefined,
+    datePublished: post.publishedDate,
+    dateModified: post.updatedDate,
+    inLanguage: post.language === 'zh' ? 'zh-TW' : 'en-TW',
+    url: canonical,
+    author: { '@type': 'Organization', name: 'MIK Store' },
+    publisher: { '@type': 'Organization', name: 'MIK Store' },
+  };
+
+  return (
+    <>
+      <SeoHead title={post.title} description={post.description} canonical={canonical} jsonLd={jsonLd} ogType="article" image={post.coverImage} />
+      <Header onSearchChange={setSearchValue} searchValue={searchValue} searchIndex={products} />
+      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 pb-28">
+        <nav className="mb-5 flex items-center gap-2 text-sm text-gray-400">
+          <Link to={post.language === 'zh' ? '/zh' : '/'} className="transition-colors hover:text-gray-700">{post.language === 'zh' ? '首頁' : 'Home'}</Link>
+          <span>/</span>
+          <Link to={blogPath} className="transition-colors hover:text-gray-700">Blog</Link>
+          <span>/</span>
+          <span className="truncate text-gray-600">{post.title}</span>
+        </nav>
+
+        <article className="overflow-hidden rounded-[2rem] border border-gray-100 bg-white shadow-sm">
+          {post.coverImage ? (
+            <div className="max-h-[620px] overflow-hidden bg-gray-50">
+              <img src={post.coverImage} alt={post.coverAlt || post.title} className="mx-auto max-h-[620px] w-full object-cover" />
+            </div>
+          ) : null}
+          <div className="px-5 py-7 sm:px-10 sm:py-10 lg:px-14">
+            <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-wider text-green-700">
+              <span>{post.language === 'zh' ? '馬友友印度食品和香料店' : 'MIK Store'}</span>
+              <span className="text-gray-300">•</span>
+              <time dateTime={post.publishedDate}>{new Intl.DateTimeFormat(post.language === 'zh' ? 'zh-TW' : 'en-TW', { dateStyle: 'long' }).format(new Date(post.publishedDate))}</time>
+              <span className="text-gray-300">•</span>
+              <span>{post.minutesToRead} min read</span>
+            </div>
+            <h1 className="mt-4 text-3xl font-black leading-tight text-gray-950 sm:text-5xl">{post.title}</h1>
+            {post.excerpt ? <p className="mt-5 text-lg leading-8 text-gray-600">{post.excerpt}</p> : null}
+            <div className="mt-8 border-t border-gray-100 pt-2 text-base sm:text-lg">
+              <WixRichContent content={post.richContent} />
+            </div>
+          </div>
+        </article>
+
+        <section className="mt-8">
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{post.language === 'zh' ? '更多文章' : 'More from MIK Store'}</p>
+              <h2 className="mt-1 text-2xl font-black text-gray-950">{post.language === 'zh' ? '繼續閱讀' : 'Continue reading'}</h2>
+            </div>
+            <Link to={blogPath} className="text-sm font-semibold text-green-700">{post.language === 'zh' ? '查看全部' : 'View all'}</Link>
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">{relatedPosts.map(item => <WixBlogCard key={item.path} post={item} />)}</div>
+        </section>
+      </main>
+      <Footer />
+      <BottomNav active="home" />
+    </>
+  );
+}
+
 function BlogIndex({ products, searchValue, setSearchValue }) {
   const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
   const description = 'SEO-rich Indian grocery guides for Taiwan shoppers, including herbs, students, families, nomads, and tourism-focused shopping.';
@@ -338,6 +432,16 @@ function BlogIndex({ products, searchValue, setSearchValue }) {
           </div>
         </section>
 
+        <section className="mt-10">
+          <div className="mb-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">MIK Store archive</p>
+            <h2 className="text-2xl font-bold text-gray-900">All articles from Indian Store Taiwan</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {WIX_BLOG_POSTS.map(post => <WixBlogCard key={post.path} post={post} />)}
+          </div>
+        </section>
+
         <section className="mt-8 rounded-3xl border border-gray-100 bg-white p-5 sm:p-6 shadow-sm">
           <div className="flex items-start gap-3">
             <div className="w-11 h-11 rounded-2xl bg-green-100 text-green-700 flex items-center justify-center flex-shrink-0">
@@ -370,12 +474,17 @@ function BlogIndex({ products, searchValue, setSearchValue }) {
   );
 }
 
-export default function BlogPage() {
-  const { slug } = useParams();
+export default function BlogPage({ legacyIndex = false }) {
+  const { slug: routeSlug, legacyPostSlug } = useParams();
+  const location = useLocation();
+  const slug = legacyIndex ? legacyPostSlug : routeSlug;
   const { products } = useAdmin();
   const [searchValue, setSearchValue] = useState('');
 
-  const post = slug ? getBlogPost(slug) : null;
+  let decodedPath = location.pathname;
+  try { decodedPath = decodeURIComponent(location.pathname); } catch { /* Keep the browser path if malformed. */ }
+  const wixPost = legacyIndex ? WIX_BLOG_POST_BY_PATH.get(decodedPath) : null;
+  const post = !legacyIndex && slug ? getBlogPost(slug) : null;
   const relatedPosts = useMemo(() => {
     if (!post) return BLOG_POSTS.slice(0, 3);
     return post.relatedSlugs
@@ -383,6 +492,10 @@ export default function BlogPage() {
       .filter(Boolean)
       .slice(0, 3);
   }, [post]);
+
+  if (legacyIndex && wixPost) {
+    return <WixPostView post={wixPost} products={products} searchValue={searchValue} setSearchValue={setSearchValue} />;
+  }
 
   if (slug && !post) {
     return <Navigate to="/blog" replace />;

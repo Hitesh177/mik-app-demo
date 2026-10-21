@@ -2,9 +2,12 @@ import { ShoppingCart, Search, X, Moon, Sun, UserCircle2, BadgePercent } from 'l
 import { useCart } from '../context/CartContext';
 import { useDarkMode } from '../context/DarkModeContext';
 import { useCustomer } from '../context/CustomerContext';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { CATEGORIES } from '../data/mockData';
+import { isChinesePath, localizedPath, toggleLocalePath } from '../lib/storeRoutes';
+import { productSearchScore } from '../lib/search';
+import SmartImage from './SmartImage';
 
 export default function Header({ onSearchChange, searchValue, searchIndex = [] }) {
   const { totalItems } = useCart();
@@ -13,6 +16,8 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
   const customer = customerCtx?.customer;
   const isLoggedIn = customerCtx?.isLoggedIn;
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isZh = isChinesePath(pathname);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
   const [desktopSearchFocused, setDesktopSearchFocused] = useState(false);
   const [mobileSearchFocused, setMobileSearchFocused] = useState(false);
@@ -31,30 +36,14 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
     return searchIndex
       .map(product => {
         const categoryLabel = categoryLabels.get(product.category) || '';
-        const searchPool = [
-          product.name_en,
-          product.name_zh,
-          categoryLabel,
-          product.seo_title,
-          product.seo_keywords,
-          product.seo_h1,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-
-        if (!searchPool.includes(searchQuery)) return null;
-
-        const exactName = product.name_en?.toLowerCase() === searchQuery;
-        const startsName = product.name_en?.toLowerCase().startsWith(searchQuery);
-        const startsCategory = categoryLabel.toLowerCase().startsWith(searchQuery);
-        const categoryMatch = searchPool.indexOf(searchQuery);
+        const fuzzyScore = productSearchScore(product, searchQuery, categoryLabel);
+        if (fuzzyScore < 0) return null;
         const hotBoost = product.badge === 'Hot' ? 1 : 0;
 
         return {
           product,
           categoryLabel,
-          score: (exactName ? 120 : 0) + (startsName ? 70 : 0) + (startsCategory ? 35 : 0) + (categoryMatch === 0 ? 40 : 0) + hotBoost,
+          score: fuzzyScore + hotBoost,
         };
       })
       .filter(Boolean)
@@ -67,8 +56,12 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
     setDesktopSearchFocused(false);
     setMobileSearchFocused(false);
     setShowMobileSearch(false);
-    navigate(`/product/${product.seo_slug || product.id}`);
+    navigate(localizedPath(product.legacy_path || `/product-page/${product.seo_slug || product.id}`, isZh));
   };
+
+  useEffect(() => {
+    document.documentElement.lang = isZh ? 'zh-Hant-TW' : 'en-TW';
+  }, [isZh]);
 
   const showDesktopSuggestions = desktopSearchFocused && searchQuery.length >= 2 && searchSuggestions.length > 0;
   const showMobileSuggestions = mobileSearchFocused && searchQuery.length >= 2 && searchSuggestions.length > 0;
@@ -84,12 +77,12 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
   return (
     <header className="sticky top-0 z-40 bg-white shadow-sm">
       <div className="bg-green-700 text-white text-center text-xs py-1.5 font-medium tracking-wide">
-        🚚 Free delivery island-wide in Taiwan
+        {isZh ? '🚚 消費滿 NT$4,000 享台灣全島免運' : '🚚 Free Taiwan-wide delivery on orders over NT$4,000'}
       </div>
 
       <div className="flex items-center gap-3 px-4 py-3 max-w-6xl mx-auto">
         {/* Logo */}
-        <button type="button" onClick={() => navigate('/')} className="flex items-center gap-2 flex-shrink-0" aria-label="Go to home page">
+        <button type="button" onClick={() => navigate(localizedPath('/', isZh))} className="flex items-center gap-2 flex-shrink-0" aria-label={isZh ? '前往首頁' : 'Go to home page'}>
           <div className="w-8 h-8 bg-green-700 rounded-lg flex items-center justify-center">
             <span className="text-white font-bold text-sm">M</span>
           </div>
@@ -107,13 +100,13 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
                 <Search size={15} className="text-gray-400 flex-shrink-0" />
                 <input
                   type="text"
-                  placeholder="Search spices, rice, lentils..."
+                  placeholder={isZh ? '搜尋香料、米、豆類...' : 'Search spices, rice, lentils...'}
                   className="bg-transparent text-sm w-full outline-none text-gray-700 placeholder-gray-400"
                   value={searchValue || ''}
                   onChange={e => onSearchChange?.(e.target.value)}
                   onFocus={() => setDesktopSearchFocused(true)}
                   onBlur={() => setDesktopSearchFocused(false)}
-                  aria-label="Search products"
+                  aria-label={isZh ? '搜尋商品' : 'Search products'}
                   aria-autocomplete="list"
                   aria-expanded={showDesktopSuggestions}
                   role="searchbox"
@@ -148,7 +141,7 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
                       >
                         <div className="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
                           {product.image_url ? (
-                            <img src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-1.5" />
+                            <SmartImage src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-1.5" sizes="44px" />
                           ) : (
                             <span className="text-lg">🛒</span>
                           )}
@@ -172,6 +165,17 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
 
         {/* Right actions */}
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => navigate(toggleLocalePath(pathname))}
+            className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5 text-[11px] font-bold shadow-sm"
+            aria-label={isZh ? 'Switch to English' : '切換至中文'}
+            title={isZh ? 'Switch to English' : '切換至中文'}
+          >
+            <span className={`rounded-md px-1.5 py-1 ${!isZh ? 'bg-green-700 text-white' : 'text-gray-400'}`}>EN</span>
+            <span className={`rounded-md px-1.5 py-1 ${isZh ? 'bg-green-700 text-white' : 'text-gray-400'}`}>中文</span>
+          </button>
+
           {/* Dark mode toggle */}
           <button
             type="button"
@@ -185,7 +189,7 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
 
           <button
             type="button"
-            onClick={() => navigate('/account')}
+            onClick={() => navigate(localizedPath('/account', isZh))}
             className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 sm:px-3 py-2 rounded-xl text-sm font-medium transition-colors"
             aria-label={isLoggedIn ? 'Open customer account' : 'Sign in'}
           >
@@ -199,7 +203,7 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
                 </span>
               </span>
             ) : (
-              <span className="hidden sm:inline">Sign in</span>
+              <span className="hidden sm:inline">{isZh ? '登入' : 'Sign in'}</span>
             )}
           </button>
 
@@ -218,12 +222,12 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
           {/* Cart */}
           <button
             type="button"
-            onClick={() => navigate('/cart')}
+            onClick={() => navigate(localizedPath('/cart', isZh))}
             className="relative flex items-center gap-1.5 bg-green-700 text-white px-3 py-2 rounded-xl text-sm font-medium"
             aria-label={`Open cart with ${totalItems} item${totalItems === 1 ? '' : 's'}`}
           >
             <ShoppingCart size={16} className={cartBounce ? 'animate-cart-bounce' : ''} />
-            <span className="hidden sm:inline">Cart</span>
+            <span className="hidden sm:inline">{isZh ? '購物車' : 'Cart'}</span>
             {totalItems > 0 && (
               <span className="bg-orange-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center leading-none">
                 {totalItems}
@@ -240,14 +244,14 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
             <Search size={15} className="text-gray-400" />
             <input
               type="text"
-              placeholder="Search spices, rice, lentils..."
+              placeholder={isZh ? '搜尋香料、米、豆類...' : 'Search spices, rice, lentils...'}
               className="bg-transparent text-sm w-full outline-none text-gray-700 placeholder-gray-400"
               value={searchValue || ''}
               onChange={e => onSearchChange?.(e.target.value)}
               onFocus={() => setMobileSearchFocused(true)}
               onBlur={() => setMobileSearchFocused(false)}
               autoFocus
-              aria-label="Search products"
+              aria-label={isZh ? '搜尋商品' : 'Search products'}
               aria-autocomplete="list"
               aria-expanded={showMobileSuggestions}
               role="searchbox"
@@ -281,7 +285,7 @@ export default function Header({ onSearchChange, searchValue, searchIndex = [] }
                   >
                     <div className="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
                       {product.image_url ? (
-                        <img src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-1.5" />
+                        <SmartImage src={product.image_url} alt={product.name_en} className="w-full h-full object-contain p-1.5" sizes="44px" />
                       ) : (
                         <span className="text-lg">🛒</span>
                       )}

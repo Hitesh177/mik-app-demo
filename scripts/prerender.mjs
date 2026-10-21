@@ -1,16 +1,30 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { CATEGORIES, PRODUCTS as SEED_PRODUCTS } from '../src/data/mockData.js';
 import { BLOG_POSTS } from '../src/data/blogPosts.js';
+import { WIX_BLOG_POSTS } from '../src/data/wixBlogPosts.js';
+import { SERVICES } from '../src/data/services.js';
+import { withLegacyProducts } from '../src/data/legacyProducts.js';
+import { LEGACY_COLLECTION_ROUTES, PUBLIC_STANDARD_ROUTES } from '../src/data/publicRoutes.js';
+import { getWixCatalog } from '../server/wix_catalog.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const PUBLIC_DIR = join(ROOT, 'public');
 const STORE_SCRIPT = join(ROOT, 'server', 'sqlite_store.py');
-const SITE_URL = (process.env.MIK_PUBLIC_SITE_URL || 'http://127.0.0.1:5173').replace(/\/$/, '');
+const SITE_URL = (process.env.MIK_PUBLIC_SITE_URL || 'https://www.indianstoretaiwan.com').replace(/\/$/, '');
+const LOCAL_ENV_PATH = join(ROOT, '.env.local');
+
+if (existsSync(LOCAL_ENV_PATH)) {
+  for (const line of readFileSync(LOCAL_ENV_PATH, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match || match[1] in process.env) continue;
+    process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+}
 
 function slugify(value) {
   return String(value || '')
@@ -19,6 +33,14 @@ function slugify(value) {
     .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-+/g, '-');
+}
+
+function productPath(product) {
+  const slug = product.seo_slug || slugify(product.name_en) || product.id;
+  const legacyPath = String(product.legacy_path || '').trim();
+  return legacyPath.startsWith('/product-page/')
+    ? legacyPath
+    : `/product-page/${encodeURIComponent(slug)}`;
 }
 
 function escapeHtml(value) {
@@ -32,6 +54,59 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, '&#96;');
+}
+
+function wixMediaSource(source) {
+  const value = source?.url || source?.id || '';
+  if (!value || value.startsWith('/') || /^https?:\/\//.test(value)) return value;
+  return `https://static.wixstatic.com/media/${value.replace(/^media\//, '')}`;
+}
+
+function legacyHref(value) {
+  if (!value) return '#';
+  try {
+    const url = new URL(value, SITE_URL);
+    if (/^(www\.)?(indianstoretaiwan|mikstoretaiwan)\.com$/i.test(url.hostname)) return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return value;
+  }
+  return value;
+}
+
+function wixRichHtml(node) {
+  if (!node) return '';
+  const childHtml = () => (node.nodes || []).map(wixRichHtml).join('');
+  if (node.type === 'TEXT') {
+    let value = escapeHtml(node.textData?.text || '');
+    for (const decoration of node.textData?.decorations || []) {
+      if (decoration.type === 'BOLD') value = `<strong>${value}</strong>`;
+      if (decoration.type === 'ITALIC') value = `<em>${value}</em>`;
+      if (decoration.type === 'UNDERLINE') value = `<u>${value}</u>`;
+      if (decoration.type === 'LINK') value = `<a href="${escapeAttr(legacyHref(decoration.linkData?.link?.url))}">${value}</a>`;
+    }
+    return value;
+  }
+  if (node.type === 'PARAGRAPH') return `<p>${childHtml()}</p>`;
+  if (node.type === 'HEADING') return `<h${Math.min(4, Math.max(2, Number(node.headingData?.level || 2)))}>${childHtml()}</h${Math.min(4, Math.max(2, Number(node.headingData?.level || 2))) }>`;
+  if (node.type === 'BULLETED_LIST') return `<ul>${childHtml()}</ul>`;
+  if (node.type === 'ORDERED_LIST') return `<ol>${childHtml()}</ol>`;
+  if (node.type === 'LIST_ITEM') return `<li>${childHtml()}</li>`;
+  if (node.type === 'IMAGE') {
+    const data = node.imageData || {};
+    const src = wixMediaSource(data.image?.src);
+    return src ? `<figure><img src="${escapeAttr(src)}" alt="${escapeAttr(data.altText || data.caption || '')}" loading="lazy" />${data.caption ? `<figcaption>${escapeHtml(data.caption)}</figcaption>` : ''}</figure>` : '';
+  }
+  if (node.type === 'GALLERY') return `<div class="gallery">${(node.galleryData?.items || []).map(item => {
+    const image = item.image || {};
+    const src = wixMediaSource(image.media?.src);
+    return src ? `<img src="${escapeAttr(src)}" alt="${escapeAttr(image.altText || item.title || '')}" loading="lazy" />` : '';
+  }).join('')}</div>`;
+  if (node.type === 'TABLE') return `<div class="table-wrap"><table>${childHtml()}</table></div>`;
+  if (node.type === 'TABLE_ROW') return `<tr>${childHtml()}</tr>`;
+  if (node.type === 'TABLE_CELL') return `<td>${childHtml()}</td>`;
+  if (node.type === 'BLOCKQUOTE') return `<blockquote>${childHtml()}</blockquote>`;
+  if (node.type === 'DIVIDER') return '<hr />';
+  return childHtml();
 }
 
 function readProductsFromStore() {
@@ -50,7 +125,13 @@ function readProductsFromStore() {
   }
 }
 
-const products = readProductsFromStore() || SEED_PRODUCTS;
+const wixProducts = process.env.WIX_API_KEY
+  ? await getWixCatalog().then(catalog => catalog.products).catch(() => null)
+  : null;
+const rawProducts = withLegacyProducts(wixProducts || readProductsFromStore() || SEED_PRODUCTS);
+// Wix can return duplicate records that resolve to the same legacy URL. Keep the
+// most recent record so each product page and sitemap URL is generated once.
+const products = [...new Map(rawProducts.map(product => [productPath(product), product])).values()];
 const productMap = new Map(products.map(product => [String(product.id), product]));
 const blogMap = new Map(BLOG_POSTS.map(post => [post.slug, post]));
 
@@ -81,6 +162,7 @@ function buildProductHtml(product) {
   const related = products
     .filter(item => item.category === product.category && item.id !== product.id)
     .slice(0, 8);
+  const canonicalPath = productPath(product);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -91,11 +173,11 @@ function buildProductHtml(product) {
   <meta name="description" content="${escapeAttr(description)}" />
   <meta name="keywords" content="${escapeAttr(keywords)}" />
   <meta name="robots" content="index,follow" />
-  <link rel="canonical" href="${SITE_URL}/product/${encodeURIComponent(slug)}" />
+  <link rel="canonical" href="${SITE_URL}${canonicalPath}" />
   <meta property="og:type" content="product" />
   <meta property="og:title" content="${escapeAttr(title)}" />
   <meta property="og:description" content="${escapeAttr(description)}" />
-  <meta property="og:url" content="${SITE_URL}/product/${encodeURIComponent(slug)}" />
+  <meta property="og:url" content="${SITE_URL}${canonicalPath}" />
   ${product.image_url ? `<meta property="og:image" content="${escapeAttr(product.image_url)}" />` : ''}
   <script type="application/ld+json">${JSON.stringify({
     '@context': 'https://schema.org',
@@ -108,7 +190,7 @@ function buildProductHtml(product) {
     category: product.category,
     offers: {
       '@type': 'Offer',
-      url: `${SITE_URL}/product/${encodeURIComponent(slug)}`,
+      url: `${SITE_URL}${canonicalPath}`,
       priceCurrency: 'TWD',
       price: Number(product.price || 0),
       availability: Number(product.stock || 0) > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
@@ -150,7 +232,7 @@ function buildProductHtml(product) {
       <div class="grid related">
         ${related.map(item => {
           const relSlug = item.seo_slug || slugify(item.name_en) || item.id;
-          return `<a href="/product/${encodeURIComponent(relSlug)}"><strong>${escapeHtml(item.name_en)}</strong><br /><span style="color:#6b7280">NT$${Number(item.price || 0).toLocaleString()}</span></a>`;
+          return `<a href="${escapeAttr(productPath(item))}"><strong>${escapeHtml(item.name_en)}</strong><br /><span style="color:#6b7280">NT$${Number(item.price || 0).toLocaleString()}</span></a>`;
         }).join('')}
       </div>
     </section>
@@ -182,7 +264,7 @@ function buildCategoryHtml(categoryId) {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
       ${items.map(item => {
         const slug = item.seo_slug || slugify(item.name_en) || item.id;
-        return `<a href="/product/${encodeURIComponent(slug)}" style="display:block;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:14px;text-decoration:none;color:#111827"><strong>${escapeHtml(item.name_en)}</strong><br /><span style="color:#6b7280">NT$${Number(item.price || 0).toLocaleString()}</span></a>`;
+        return `<a href="${escapeAttr(productPath(item))}" style="display:block;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:14px;text-decoration:none;color:#111827"><strong>${escapeHtml(item.name_en)}</strong><br /><span style="color:#6b7280">NT$${Number(item.price || 0).toLocaleString()}</span></a>`;
       }).join('')}
     </div>
   </main>
@@ -369,7 +451,7 @@ function buildBlogPostHtml(post) {
           <div class="grid">
             ${featuredProducts.map(product => {
               const slug = product.seo_slug || slugify(product.name_en) || product.id;
-              return `<a class="product" href="/product/${encodeURIComponent(slug)}">
+              return `<a class="product" href="${escapeAttr(productPath(product))}">
                 ${product.image_url ? `<img src="${escapeAttr(product.image_url)}" alt="${escapeAttr(product.name_en)}" />` : ''}
                 <h3 style="margin:12px 0 0">${escapeHtml(product.name_en)}</h3>
                 <p style="margin:6px 0 0;color:#6b7280">NT$${Number(product.price || 0).toLocaleString()}</p>
@@ -410,6 +492,45 @@ function buildBlogPostHtml(post) {
 </html>`;
 }
 
+function buildWixBlogPostHtml(post) {
+  const canonical = new URL(post.path, `${SITE_URL}/`).href;
+  const body = (post.richContent?.nodes || []).map(wixRichHtml).join('');
+  const lang = post.language === 'zh' ? 'zh-TW' : 'en-TW';
+  return `<!DOCTYPE html>
+<html lang="${lang}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(post.title)}</title>
+  <meta name="description" content="${escapeAttr(post.description)}" />
+  <meta name="robots" content="index,follow" />
+  <link rel="canonical" href="${escapeAttr(canonical)}" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="${escapeAttr(post.title)}" />
+  <meta property="og:description" content="${escapeAttr(post.description)}" />
+  <meta property="og:url" content="${escapeAttr(canonical)}" />
+  ${post.coverImage ? `<meta property="og:image" content="${escapeAttr(new URL(post.coverImage, `${SITE_URL}/`).href)}" />` : ''}
+  <script type="application/ld+json">${JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.title,
+    description: post.description,
+    image: post.coverImage ? new URL(post.coverImage, `${SITE_URL}/`).href : undefined,
+    datePublished: post.publishedDate,
+    dateModified: post.updatedDate,
+    inLanguage: lang,
+    url: canonical,
+    author: { '@type': 'Organization', name: 'MIK Store' },
+    publisher: { '@type': 'Organization', name: 'MIK Store' },
+  })}</script>
+  <style>
+    body{margin:0;background:#f8fafc;color:#111827;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{max-width:920px;margin:auto;padding:32px 18px 80px}.article{overflow:hidden;border:1px solid #e5e7eb;border-radius:28px;background:#fff;box-shadow:0 10px 35px rgba(15,23,42,.06)}.cover{display:block;width:100%;max-height:620px;object-fit:cover;background:#f3f4f6}.body{padding:clamp(24px,5vw,56px)}h1{font-size:clamp(2rem,5vw,3.6rem);line-height:1.05;margin:14px 0}h2,h3,h4{margin-top:2rem;line-height:1.2}p,li{font-size:1.05rem;line-height:1.8;color:#374151}a{color:#15803d}figure{margin:28px 0}figure img{display:block;max-width:100%;max-height:720px;margin:auto;border-radius:18px}figcaption{text-align:center;color:#6b7280;margin-top:8px}.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:28px 0}.gallery img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:16px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}td{border:1px solid #e5e7eb;padding:12px;vertical-align:top}.meta{font-size:.8rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#15803d}.back{display:inline-block;margin-bottom:18px;text-decoration:none;font-weight:700}
+  </style>
+</head>
+<body><main class="shell"><a class="back" href="${post.language === 'zh' ? '/zh/blog' : '/blog'}">← ${post.language === 'zh' ? '所有文章' : 'All articles'}</a><article class="article">${post.coverImage ? `<img class="cover" src="${escapeAttr(post.coverImage)}" alt="${escapeAttr(post.coverAlt || post.title)}" />` : ''}<div class="body"><div class="meta">MIK Store · ${post.minutesToRead} min read</div><h1>${escapeHtml(post.title)}</h1>${post.excerpt ? `<p style="font-size:1.2rem;color:#6b7280">${escapeHtml(post.excerpt)}</p>` : ''}${body}</div></article></main></body>
+</html>`;
+}
+
 function buildCategoriesHtml() {
   const items = CATEGORIES.filter(category => category.id !== 'all');
   return `<!DOCTYPE html>
@@ -434,6 +555,47 @@ function buildCategoriesHtml() {
 </html>`;
 }
 
+function buildServiceHtml(service) {
+  const canonicalPath = `/services/${service.slug}`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(service.name)} | MIK Store Taiwan</title>
+  <meta name="description" content="${escapeAttr(`${service.name} at MIK Store Taiwan. ${service.price}, ${service.duration}. ${service.summary}`)}" />
+  <meta name="robots" content="index,follow" />
+  <link rel="canonical" href="${SITE_URL}${canonicalPath}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="${escapeAttr(service.name)} | MIK Store Taiwan" />
+  <meta property="og:description" content="${escapeAttr(service.summary)}" />
+  <meta property="og:image" content="${escapeAttr(service.image)}" />
+  <script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'Service', name: service.name, description: service.summary, provider: { '@type': 'Organization', name: 'MIK Store' } })}</script>
+</head>
+<body style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;background:#f7f1e7;color:#20251c">
+  <main style="max-width:980px;margin:0 auto;padding:32px 20px 72px">
+    <a href="/services" style="color:#31593a;font-weight:700;text-decoration:none">← All services</a>
+    <article style="margin-top:22px;overflow:hidden;border-radius:28px;background:#213a29;color:white;box-shadow:0 20px 50px rgba(33,58,41,.18)">
+      <img src="${escapeAttr(service.image)}" alt="${escapeAttr(service.name)}" style="display:block;width:100%;max-height:520px;object-fit:cover" />
+      <div style="padding:clamp(28px,5vw,54px)"><p style="color:#efc56d;font-weight:800;text-transform:uppercase;letter-spacing:.15em">${escapeHtml(service.eyebrow)}</p><h1 style="font-size:clamp(2.5rem,6vw,4.5rem);line-height:1;margin:16px 0">${escapeHtml(service.name)}</h1><p style="font-weight:800">${escapeHtml(service.price)} · ${escapeHtml(service.duration)}</p><p style="max-width:720px;line-height:1.75;color:#e7e5e4">${escapeHtml(service.summary)}</p><a href="https://line.me/ti/p/@688vynca" style="display:inline-block;margin-top:12px;border-radius:999px;background:#efc56d;color:#213323;padding:12px 20px;font-weight:800;text-decoration:none">Ask about booking</a></div>
+    </article>
+  </main>
+</body>
+</html>`;
+}
+
+function buildStandardHtml(route) {
+  const canonical = `${SITE_URL}${route.path === '/' ? '/' : route.path}`;
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>${escapeHtml(route.title)}</title><meta name="description" content="${escapeAttr(route.description)}" />
+  <meta name="robots" content="index,follow" /><link rel="canonical" href="${escapeAttr(canonical)}" />
+  <meta property="og:type" content="website" /><meta property="og:title" content="${escapeAttr(route.title)}" />
+  <meta property="og:description" content="${escapeAttr(route.description)}" /><meta property="og:url" content="${escapeAttr(canonical)}" />
+  <script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'WebPage', name: route.h1, description: route.description, url: canonical, isPartOf: { '@type': 'WebSite', name: 'MIK Store', url: SITE_URL } })}</script>
+</head><body><main style="max-width:980px;margin:auto;padding:40px 20px;font-family:system-ui;color:#1f2937"><p style="font-weight:800;color:#166534">MIK Store Taiwan</p><h1>${escapeHtml(route.h1)}</h1><p style="max-width:720px;line-height:1.75">${escapeHtml(route.description)}</p><nav aria-label="Related pages">${(route.links || []).map(link => `<a href="${escapeAttr(link)}" style="display:inline-block;margin:12px 12px 0 0;color:#166534;font-weight:700">${escapeHtml(link.replace(/^\//, '').replace(/-/g, ' ') || 'Shop home')}</a>`).join('')}</nav></main></body></html>`;
+}
+
 function ensureDir(filePath) {
   mkdirSync(dirname(filePath), { recursive: true });
 }
@@ -445,27 +607,48 @@ function writePage(pathname, html) {
 }
 
 function writeSeoArtifacts() {
+  // Remove obsolete generated product pages so deleted or renamed Wix items do not linger.
+  rmSync(join(PUBLIC_DIR, 'product'), { recursive: true, force: true });
+  rmSync(join(PUBLIC_DIR, 'product-page'), { recursive: true, force: true });
+  rmSync(join(PUBLIC_DIR, 'zh', 'product-page'), { recursive: true, force: true });
   ensureDir(join(PUBLIC_DIR, 'sitemap.xml'));
   const urls = [
     `${SITE_URL}/`,
     `${SITE_URL}/categories`,
     `${SITE_URL}/blog`,
   ];
-  const sitemapEntries = [];
   for (const product of products) {
-    const slug = product.seo_slug || slugify(product.name_en) || product.id;
-    const productUrl = `${SITE_URL}/product/${encodeURIComponent(slug)}`;
+    const legacyPath = productPath(product);
+    const productUrl = `${SITE_URL}${legacyPath}`;
     urls.push(productUrl);
-    sitemapEntries.push(`  <url><loc>${productUrl}</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>`);
-    writePage(`/product/${slug}`, buildProductHtml(product));
+    writePage(legacyPath, buildProductHtml(product));
+    writePage(`/zh${legacyPath}`, buildProductHtml(product));
   }
   for (const category of CATEGORIES.filter(item => item.id !== 'all')) {
     writePage(`/category/${category.id}`, buildCategoryHtml(category.id));
     urls.push(`${SITE_URL}/category/${encodeURIComponent(category.id)}`);
   }
+  for (const [legacyPath, categoryId] of LEGACY_COLLECTION_ROUTES) {
+    const html = buildCategoryHtml(categoryId).replaceAll(`${SITE_URL}/category/${encodeURIComponent(categoryId)}`, `${SITE_URL}/${legacyPath}`);
+    writePage(`/${legacyPath}`, html);
+    writePage(`/zh/${legacyPath}`, html.replace('<html lang="en">', '<html lang="zh-TW">').replaceAll(`${SITE_URL}/${legacyPath}`, `${SITE_URL}/zh/${legacyPath}`));
+    urls.push(`${SITE_URL}/${legacyPath}`, `${SITE_URL}/zh/${legacyPath}`);
+  }
   for (const post of BLOG_POSTS) {
     writePage(`/blog/${post.slug}`, buildBlogPostHtml(post));
     urls.push(`${SITE_URL}/blog/${encodeURIComponent(post.slug)}`);
+  }
+  for (const post of WIX_BLOG_POSTS) {
+    writePage(post.path, buildWixBlogPostHtml(post));
+    urls.push(new URL(post.path, `${SITE_URL}/`).href);
+  }
+  for (const service of SERVICES) {
+    writePage(`/services/${service.slug}`, buildServiceHtml(service));
+    urls.push(`${SITE_URL}/services/${service.slug}`);
+  }
+  for (const route of PUBLIC_STANDARD_ROUTES) {
+    writePage(route.path, buildStandardHtml(route));
+    urls.push(`${SITE_URL}${route.path === '/' ? '/' : route.path}`);
   }
   writePage('/categories', buildCategoriesHtml());
   writePage('/blog', buildBlogIndexHtml());
@@ -476,7 +659,7 @@ function writeSeoArtifacts() {
   );
   writeFileSync(
     join(PUBLIC_DIR, 'sitemap.xml'),
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(url => `  <url><loc>${url}</loc><changefreq>weekly</changefreq><priority>${url.includes('/product/') ? '0.8' : '0.9'}</priority></url>`).join('\n')}\n</urlset>\n`,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${[...new Set(urls)].map(url => `  <url><loc>${escapeHtml(url)}</loc><changefreq>weekly</changefreq><priority>${url.includes('/product-page/') ? '0.8' : '0.9'}</priority></url>`).join('\n')}\n</urlset>\n`,
     'utf8',
   );
 }

@@ -1,15 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
+import { ArrowLeft, ExternalLink, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CreditCard, Smartphone, Building2, BadgePercent, Gift } from 'lucide-react';
 import { useCart } from '../context/CartContext';
-import { useAdmin } from '../context/AdminContext';
-import { useCustomer } from '../context/CustomerContext';
-
-const PAYMENT_METHODS = [
-  { id: 'paytm', label: 'Paytm', icon: Smartphone, desc: 'Pay directly to owner\'s Paytm account' },
-  { id: 'bank_transfer', label: 'Bank Transfer', icon: Building2, desc: 'Manual bank transfer (details shared after order)' },
-  { id: 'cod', label: 'Cash on Delivery', icon: CreditCard, desc: 'Pay when you receive your order' },
-];
+import { api } from '../lib/api';
 
 function formatMoney(value) {
   return `NT$${Number(value || 0).toLocaleString()}`;
@@ -17,287 +10,78 @@ function formatMoney(value) {
 
 export default function CheckoutPage() {
   const navigate = useNavigate();
-  const { cart, totalPrice, clearCart } = useCart();
-  const { addOrder } = useAdmin();
-  const { customer, isLoggedIn, updateProfile, reloadOrders, refreshCustomer } = useCustomer();
-
-  const [form, setForm] = useState({ name: '', phone: '', address: '' });
-  const [paymentMethod, setPaymentMethod] = useState('paytm');
-  const [errors, setErrors] = useState({});
+  const { cart, totalPrice, syncError } = useCart();
   const [loading, setLoading] = useState(false);
-  const [usePoints, setUsePoints] = useState(false);
-  const [couponCode, setCouponCode] = useState('');
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (customer) {
-      setForm({
-        name: customer.name || '',
-        phone: customer.phone || '',
-        address: customer.address || '',
-      });
-      setUsePoints(false);
-    }
-  }, [customer]);
-
-  const canRedeem = Boolean(customer?.rewards?.can_redeem_100);
-  const redeemPoints = usePoints && canRedeem ? 100 : 0;
-  const discountAmount = useMemo(() => {
-    if (!redeemPoints) return 0;
-    return Math.max(0, Math.round(totalPrice * 0.10));
-  }, [redeemPoints, totalPrice]);
-  const payableTotal = Math.max(0, totalPrice - discountAmount);
-  const pointsEarned = Math.floor(payableTotal / 10);
-
-  const validate = () => {
-    const e = {};
-    if (!form.name.trim()) e.name = 'Name is required';
-    if (!form.phone.trim()) e.phone = 'Phone number is required';
-    if (!form.address.trim()) e.address = 'Delivery address is required';
-    return e;
-  };
-
-  const handleSubmit = async (e) => {
-    e?.preventDefault?.();
-    const errs = validate();
-    if (Object.keys(errs).length > 0) {
-      setErrors(errs);
-      return;
-    }
-
+  const continueToWix = async () => {
     setLoading(true);
+    setError('');
     try {
-      if (isLoggedIn) {
-        try {
-          await updateProfile(form);
-        } catch {
-          // Keep checkout moving even if profile sync temporarily fails.
-        }
-      }
-
-      const newOrder = await addOrder({
-        customer_name: form.name,
-        customer_phone: form.phone,
-        customer_address: form.address,
-        items: cart.map(i => ({ product_id: i.id, name: i.name_en, price: i.price, quantity: i.quantity })),
-        payment_method: paymentMethod,
-        redeem_points: redeemPoints,
-        coupon_code: couponCode.trim(),
-      });
-
-      clearCart();
-      if (isLoggedIn) {
-        await Promise.allSettled([reloadOrders(), refreshCustomer()]);
-      }
-      navigate('/order-confirmation', { state: { order: newOrder } });
-    } catch (error) {
-      setErrors({ submit: error.message || 'Failed to place order' });
-    } finally {
+      const result = await api.createWixCheckout();
+      window.location.assign(result.checkout_url);
+    } catch (checkoutError) {
+      setError(checkoutError.message || 'Wix checkout is temporarily unavailable. Please try again.');
       setLoading(false);
     }
   };
 
   if (cart.length === 0) {
-    navigate('/');
-    return null;
+    return (
+      <main className="min-h-[70vh] bg-stone-50 px-4 py-16">
+        <div className="mx-auto max-w-lg rounded-3xl border border-stone-200 bg-white p-8 text-center shadow-sm">
+          <h1 className="text-2xl font-bold text-gray-950">Your cart is empty</h1>
+          <p className="mt-2 text-sm text-gray-500">Add products before continuing to checkout.</p>
+          <button onClick={() => navigate('/')} className="mt-6 rounded-xl bg-green-700 px-6 py-3 font-semibold text-white">Continue shopping</button>
+        </div>
+      </main>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <div className="bg-white px-4 py-4 flex items-center gap-3 shadow-sm sticky top-0 z-10">
-        <button onClick={() => navigate(-1)} className="p-1.5 rounded-lg hover:bg-gray-100">
-          <ArrowLeft size={20} />
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_#ecfdf3,_#fafaf9_42%)] px-4 py-6 sm:py-12">
+      <div className="mx-auto max-w-3xl">
+        <button onClick={() => navigate('/cart')} className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-green-800">
+          <ArrowLeft size={18} /> Back to cart
         </button>
-        <h1 className="font-bold text-lg">Checkout</h1>
-      </div>
-
-      <form onSubmit={handleSubmit} className="flex-1 max-w-2xl w-full mx-auto px-4 py-4 space-y-4 pb-36">
-        {!isLoggedIn && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            <p className="font-semibold">Sign in with Google to save your customer profile and earn loyalty points.</p>
-            <button type="button" onClick={() => navigate('/account')} className="mt-2 font-semibold text-amber-900 underline">
-              Sign in now
-            </button>
-          </div>
-        )}
-
-        {isLoggedIn && (
-          <div className="rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-            <div className="flex items-center gap-2 font-semibold">
-              <Gift size={16} />
-              Loyalty reward active
-            </div>
-            <p className="mt-1">
-              You have {customer?.rewards?.points || 0} points. {canRedeem ? 'Redeem 100 points now for 10% off.' : `${customer?.rewards?.next_reward_at ?? 100} more points until your next discount.`}
-            </p>
-          </div>
-        )}
-
-        {/* Customer info */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-4">
-          <h2 className="font-semibold text-gray-800">Delivery Details</h2>
-          <div>
-            <label className="text-sm font-medium text-gray-700 block mb-1">Full Name</label>
-            <input
-              className={`input-field ${errors.name ? 'border-red-400' : ''}`}
-              placeholder="Your full name"
-              value={form.name}
-              onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setErrors(er => ({ ...er, name: '' })); }}
-            />
-            {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
-          </div>
-          <div>
-            <label className="text-sm font-medium text-gray-700 block mb-1">Phone Number</label>
-            <input
-              className={`input-field ${errors.phone ? 'border-red-400' : ''}`}
-              placeholder="+886 ..."
-              type="tel"
-              value={form.phone}
-              onChange={e => { setForm(f => ({ ...f, phone: e.target.value })); setErrors(er => ({ ...er, phone: '' })); }}
-            />
-            {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
-          </div>
-          <div>
-            <label className="text-sm font-medium text-gray-700 block mb-1">Delivery Address</label>
-            <textarea
-              className={`input-field resize-none h-20 ${errors.address ? 'border-red-400' : ''}`}
-              placeholder="Full delivery address in Taiwan"
-              value={form.address}
-              onChange={e => { setForm(f => ({ ...f, address: e.target.value })); setErrors(er => ({ ...er, address: '' })); }}
-            />
-            {errors.address && <p className="text-red-500 text-xs mt-1">{errors.address}</p>}
-          </div>
-        </div>
-
-        {/* Loyalty redemption */}
-        {isLoggedIn && (
-          <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
-            <h2 className="font-semibold text-gray-800">Loyalty Reward</h2>
-            <label
-              className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors
-                ${redeemPoints ? 'border-amber-500 bg-amber-50' : 'border-gray-200 hover:border-gray-300'}`}
-            >
-              <input
-                type="checkbox"
-                checked={usePoints}
-                onChange={e => setUsePoints(e.target.checked)}
-                disabled={!canRedeem}
-                className="accent-amber-600"
-              />
-              <div className="flex-1">
-                <p className="font-medium text-sm text-gray-800 flex items-center gap-2">
-                  <BadgePercent size={16} className="text-amber-700" />
-                  Use 100 points for 10% off
-                </p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {canRedeem ? 'Discount will be applied to this order.' : 'You need 100 points before you can redeem.'}
-                </p>
+        <section className="overflow-hidden rounded-[2rem] border border-green-100 bg-white shadow-xl shadow-green-950/5">
+          <div className="bg-green-800 px-6 py-7 text-white sm:px-10">
+            <div className="flex items-center gap-3">
+              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white/15"><LockKeyhole size={22} /></span>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-green-200">Secure checkout</p>
+                <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Complete your order with Wix</h1>
               </div>
-              <span className="text-xs font-semibold text-amber-700">
-                {canRedeem ? 'Ready' : 'Locked'}
-              </span>
-            </label>
-          </div>
-        )}
-
-        {/* Payment method */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
-          <h2 className="font-semibold text-gray-800">Payment Method</h2>
-          {PAYMENT_METHODS.map(method => {
-            const Icon = method.icon;
-            return (
-              <label
-                key={method.id}
-                className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors
-                  ${paymentMethod === method.id ? 'border-green-600 bg-green-50' : 'border-gray-200 hover:border-gray-300'}`}
-              >
-                <input
-                  type="radio"
-                  name="payment"
-                  value={method.id}
-                  checked={paymentMethod === method.id}
-                  onChange={() => setPaymentMethod(method.id)}
-                  className="accent-green-700"
-                />
-                <Icon size={18} className={paymentMethod === method.id ? 'text-green-700' : 'text-gray-500'} />
-                <div>
-                  <p className="font-medium text-sm text-gray-800">{method.label}</p>
-                  <p className="text-xs text-gray-500">{method.desc}</p>
-                </div>
-              </label>
-            );
-          })}
-          {paymentMethod === 'paytm' && (
-            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-sm">
-              <p className="font-semibold text-orange-800">Paytm Payment Details</p>
-              <p className="text-orange-700 mt-1">Send payment to: <strong>+91 98765-43210</strong></p>
-              <p className="text-orange-600 text-xs mt-0.5">Contact us on WhatsApp after payment for confirmation</p>
             </div>
-          )}
-        </div>
-
-        {/* Order summary */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-2">
-          <h2 className="font-semibold text-gray-800 mb-3">Order Summary</h2>
-          {cart.map(item => (
-            <div key={item.id} className="flex justify-between text-sm">
-              <span className="text-gray-600">{item.name_en} × {item.quantity}</span>
-              <span className="font-medium">{formatMoney(item.price * item.quantity)}</span>
+          </div>
+          <div className="grid gap-8 p-6 sm:p-10 md:grid-cols-[1fr_0.8fr]">
+            <div>
+              <h2 className="text-lg font-bold text-gray-950">Order summary</h2>
+              <div className="mt-4 space-y-3">
+                {cart.map(item => (
+                  <div key={item.wix_line_item_id || item.id} className="flex items-start justify-between gap-4 text-sm">
+                    <span className="text-gray-600">{item.name_en} <span className="text-gray-400">x {item.quantity}</span></span>
+                    <span className="shrink-0 font-semibold text-gray-900">{formatMoney(item.price * item.quantity)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 flex items-center justify-between border-t border-stone-200 pt-5 text-lg font-bold">
+                <span>Cart subtotal</span><span>{formatMoney(totalPrice)}</span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-gray-500">Final shipping, taxes, coupons, loyalty rewards, and payment options are calculated by Wix.</p>
             </div>
-          ))}
-          <div className="border-t pt-3">
-            <label className="text-xs font-semibold uppercase tracking-wide text-gray-400 block mb-1">Coupon Code</label>
-            <input
-              className="input-field"
-              placeholder="Enter coupon code"
-              value={couponCode}
-              onChange={e => setCouponCode(e.target.value.toUpperCase())}
-            />
-            <p className="text-[11px] text-gray-400 mt-1">
-              Coupon rules are validated when you place the order.
-            </p>
-          </div>
-          <div className="border-t pt-2 flex justify-between text-sm text-gray-600">
-            <span>Delivery</span>
-            <span className="text-green-700 font-medium">FREE</span>
-          </div>
-          {redeemPoints > 0 && (
-            <div className="flex justify-between text-sm text-amber-700">
-              <span>Loyalty discount</span>
-              <span>-{formatMoney(discountAmount)}</span>
+            <div className="rounded-3xl bg-stone-50 p-5">
+              <ShieldCheck className="text-green-700" size={28} />
+              <h2 className="mt-4 text-lg font-bold text-gray-950">One trusted checkout</h2>
+              <p className="mt-2 text-sm leading-6 text-gray-600">Wix securely handles your delivery details, discount eligibility, payment, and order confirmation.</p>
+              {(error || syncError) && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error || syncError}</p>}
+              <button onClick={continueToWix} disabled={loading} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-green-700 px-5 py-4 font-bold text-white shadow-lg shadow-green-900/15 transition hover:bg-green-800 disabled:cursor-wait disabled:opacity-60">
+                {loading ? 'Opening Wix checkout...' : 'Continue securely'} {!loading && <ExternalLink size={18} />}
+              </button>
             </div>
-          )}
-          <div className="flex justify-between text-sm text-gray-600">
-            <span>Points earned</span>
-            <span className="font-medium text-gray-900">{pointsEarned}</span>
           </div>
-          <div className="flex justify-between font-bold text-base">
-            <span>Total</span>
-            <span>{formatMoney(payableTotal)}</span>
-          </div>
-        </div>
-      </form>
-
-      {errors.submit && (
-        <div className="max-w-2xl w-full mx-auto px-4 -mt-2">
-          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-            {errors.submit}
-          </div>
-        </div>
-      )}
-
-      {/* Place order button */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 p-4">
-        <div className="max-w-2xl mx-auto">
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={loading}
-            className="w-full bg-green-700 text-white font-bold py-4 rounded-2xl text-base shadow-sm active:scale-[0.98] transition-transform disabled:opacity-60"
-          >
-            {loading ? 'Placing Order...' : `Place Order · ${formatMoney(payableTotal)}`}
-          </button>
-        </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }

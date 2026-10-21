@@ -10,7 +10,7 @@ export default function AnnouncementBar() {
       <div className="max-w-6xl mx-auto flex items-center justify-center gap-4 flex-wrap text-center">
         <span className="flex items-center gap-1.5 font-medium">
           <Truck size={13} />
-          Free delivery on orders over NT$999
+          Free Taiwan-wide delivery on orders over NT$4,000
         </span>
         <span className="hidden sm:block text-green-300">|</span>
         <span className="flex items-center gap-1.5 font-medium hidden sm:flex">

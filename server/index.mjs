@@ -1,17 +1,45 @@
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { PRODUCTS as SEED_PRODUCTS, MOCK_ORDERS as SEED_ORDERS } from '../src/data/mockData.js';
 import { BLOG_POSTS } from '../src/data/blogPosts.js';
+import { WIX_BLOG_POSTS } from '../src/data/wixBlogPosts.js';
+import { getWixCatalog } from './wix_catalog.mjs';
+import {
+  addWixCartItem,
+  applyWixCartCoupon,
+  clearWixCart,
+  createCommerceClient,
+  createVisitorCommerceSession,
+  createWixCheckout,
+  getAllWixOrders,
+  getCurrentWixCart,
+  getMemberLoyalty,
+  getWixCommerceAnalytics,
+  getWixMemberOrders,
+  removeWixCartItem,
+  removeWixCartCoupon,
+  updateWixCartItem,
+} from './wix_commerce.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOCAL_ENV_PATH = join(__dirname, '..', '.env.local');
+
+if (existsSync(LOCAL_ENV_PATH)) {
+  for (const line of readFileSync(LOCAL_ENV_PATH, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match || match[1] in process.env) continue;
+    const value = match[2].replace(/^(['"])(.*)\1$/, '$2');
+    process.env[match[1]] = value;
+  }
+}
 const STORE_SCRIPT = join(__dirname, 'sqlite_store.py');
 const PRERENDER_SCRIPT = join(__dirname, '..', 'scripts', 'prerender.mjs');
 const PUBLIC_DIR = join(__dirname, '..', 'public');
-const PUBLIC_SITE_URL = (process.env.MIK_PUBLIC_SITE_URL || 'http://127.0.0.1:5173').replace(/\/$/, '');
+const PUBLIC_SITE_URL = (process.env.MIK_PUBLIC_SITE_URL || 'https://www.indianstoretaiwan.com').replace(/\/$/, '');
 const PORT = Number(process.env.API_PORT || 4173);
 const ADMIN_EMAIL = 'admin@mik.store';
 const ADMIN_PASSWORD = 'mik2024';
@@ -20,10 +48,14 @@ const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const COOKIE_SECURE = String(process.env.MIK_COOKIE_SECURE || '').trim() === '1';
 const MAX_BODY_BYTES = Number(process.env.MIK_MAX_BODY_BYTES || 2 * 1024 * 1024);
+const WIX_HEADLESS_CLIENT_ID = String(process.env.WIX_HEADLESS_CLIENT_ID || '').trim();
+const WIX_HEADLESS_REDIRECT_URI = String(process.env.WIX_HEADLESS_REDIRECT_URI || '').trim();
+const WIX_VISITOR_COOKIE = 'mik_wix_visitor_session';
+const WIX_COMMERCE_ENABLED = String(process.env.COMMERCE_PROVIDER || 'wix').toLowerCase() === 'wix';
 const ALLOWED_ORIGINS = new Set(
     String(
       process.env.MIK_ALLOWED_ORIGINS ||
-      'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173,http://127.0.0.1:4174,http://localhost:4174',
+      'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5175,http://localhost:5175,http://127.0.0.1:4173,http://localhost:4173,http://127.0.0.1:4174,http://localhost:4174',
     )
     .split(',')
     .map(origin => origin.trim())
@@ -68,8 +100,8 @@ const DEFAULT_HERO_OFFERS = [
   {
     id: 'offer-delivery',
     tag: 'Limited Time',
-    title: 'Free Delivery\non Orders NT$999+',
-    subtitle: 'Taiwan-wide delivery to your door',
+    title: 'Free Delivery\non Orders Over NT$4,000',
+    subtitle: 'Shop more and enjoy delivery across Taiwan',
     cta_label: 'Shop Now',
     href: '/',
     emoji: '🚚',
@@ -162,6 +194,16 @@ function clearAuthCookies(res, scope) {
   res.setHeader('Set-Cookie', cookies);
 }
 
+function appendCookie(res, cookie) {
+  const existing = res.getHeader('Set-Cookie');
+  const cookies = Array.isArray(existing) ? existing : existing ? [existing] : [];
+  res.setHeader('Set-Cookie', [...cookies, cookie]);
+}
+
+function setVisitorSessionCookie(res, sid) {
+  appendCookie(res, `${WIX_VISITOR_COOKIE}=${encodeURIComponent(signToken({ sid, type: 'wix_visitor', exp: Date.now() + REFRESH_TOKEN_TTL_MS }))}; ${cookieAttributes(REFRESH_TOKEN_TTL_MS / 1000)}`);
+}
+
 function getTokenFromRequest(req, scope, kind = 'access') {
   const auth = req.headers.authorization || '';
   if (auth.startsWith('Bearer ')) return auth.slice(7);
@@ -222,7 +264,7 @@ function isAllowedOrigin(origin) {
 }
 
 function getRateLimitPolicy(pathname, method) {
-  if (pathname === '/api/admin/login' || pathname === '/api/customer/google') {
+  if (pathname === '/api/admin/login' || pathname === '/api/customer/wix/start') {
     return { ...RATE_LIMITS.login, key: 'login' };
   }
   if (
@@ -324,6 +366,144 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function toBase64Url(buffer) {
+  return Buffer.from(buffer).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+async function wixJson(url, body, authorization = '') {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authorization ? { Authorization: authorization } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || payload.error || `Wix authentication failed (${response.status})`);
+  return payload;
+}
+
+async function startWixMemberLogin(visitorAccessToken = '') {
+  if (!WIX_HEADLESS_CLIENT_ID || !WIX_HEADLESS_REDIRECT_URI) throw new Error('Wix Headless authentication is not configured');
+  const codeVerifier = toBase64Url(randomBytes(48));
+  const state = toBase64Url(randomBytes(32));
+  const codeChallenge = toBase64Url(createHash('sha256').update(codeVerifier).digest());
+  const visitor = visitorAccessToken
+    ? { access_token: visitorAccessToken }
+    : await wixJson('https://www.wixapis.com/oauth2/token', { clientId: WIX_HEADLESS_CLIENT_ID, grantType: 'anonymous' });
+  const redirect = await wixJson('https://www.wixapis.com/_api/redirects-api/v1/redirect-session', {
+    auth: { authRequest: { redirectUri: WIX_HEADLESS_REDIRECT_URI, clientId: WIX_HEADLESS_CLIENT_ID, codeChallenge, codeChallengeMethod: 'S256', responseMode: 'fragment', responseType: 'code', scope: 'offline_access', state } },
+  }, `Bearer ${visitor.access_token}`);
+  saveWixSession(state, 'auth_request', { codeVerifier }, Date.now() + 10 * 60 * 1000);
+  return { state, url: redirect.redirectSession?.fullUrl };
+}
+
+async function finishWixMemberLogin({ code, state }) {
+  const pending = loadWixSession(state, 'auth_request');
+  deleteWixSession(state);
+  if (!pending) throw new Error('Wix login expired. Please try again.');
+  return wixJson('https://www.wixapis.com/oauth2/token', { clientId: WIX_HEADLESS_CLIENT_ID, grantType: 'authorization_code', redirectUri: WIX_HEADLESS_REDIRECT_URI, code, codeVerifier: pending.codeVerifier });
+}
+
+async function getWixMember(accessToken) {
+  const response = await fetch('https://www.wixapis.com/members/v1/members/my', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.member?.id) {
+    throw new Error(payload.message || 'Wix connected the account but did not return a member profile.');
+  }
+  return payload.member;
+}
+
+function wixCustomerFromMember(member) {
+  const profile = member.profile || {};
+  const contact = member.contactDetails || {};
+  const name = profile.nickname || [contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'MIK Member';
+  const email = member.loginEmail || contact.email || contact.emails?.[0] || '';
+  return {
+    id: `wix-${member.id}`,
+    wix_member_id: member.id,
+    name,
+    email,
+    phone: contact.phone || contact.phones?.[0] || '',
+    address: '',
+    avatar_url: profile.photo?.url || profile.photo?.image?.url || '',
+    points: 0,
+  };
+}
+
+function issueWixCustomerSession(res, member, tokens) {
+  const customer = wixCustomerFromMember(member);
+  const sid = `wix-csess-${randomUUID()}`;
+  const accessExp = Date.now() + ACCESS_TOKEN_TTL_MS;
+  const refreshExp = Date.now() + REFRESH_TOKEN_TTL_MS;
+  const accessToken = signToken({ sid, customer_id: customer.id, email: customer.email, type: 'wix_customer_access', exp: accessExp });
+  const refreshToken = signToken({ sid, customer_id: customer.id, email: customer.email, type: 'wix_customer_refresh', exp: refreshExp });
+  saveWixSession(sid, 'member', { customer, tokens }, refreshExp);
+  const { token: csrfToken, csrfTtlMs } = issueCsrfToken('customer', sid);
+  setAuthCookies(res, 'customer', {
+    accessToken,
+    refreshToken,
+    csrfToken,
+    accessTtlMs: ACCESS_TOKEN_TTL_MS,
+    refreshTtlMs: REFRESH_TOKEN_TTL_MS,
+    csrfTtlMs,
+  });
+  return { customer, tokens, accessToken, refreshToken, expiresAt: new Date(accessExp).toISOString() };
+}
+
+function getWixCustomerSession(req, res, kind = 'access') {
+  const token = getTokenFromRequest(req, 'customer', kind);
+  const payload = verifyToken(token);
+  const expectedType = kind === 'refresh' ? 'wix_customer_refresh' : 'wix_customer_access';
+  if (!payload || payload.type !== expectedType) return null;
+  const session = loadWixSession(payload.sid, 'member');
+  if (!session) return null;
+  if (isUnsafeMethod(req.method) && !verifyCsrfRequest(req, res, 'customer', payload)) return null;
+  return { payload, session };
+}
+
+async function getWixCommerceSession(req, res) {
+  const member = getWixCustomerSession(req, res);
+  if (member) {
+    const client = createCommerceClient({
+      clientId: WIX_HEADLESS_CLIENT_ID,
+      tokens: member.session.tokens,
+      onTokens: tokens => {
+        member.session.tokens = tokens;
+        saveWixSession(member.payload.sid, 'member', member.session, member.session.expiresAt);
+      },
+    });
+    return { client, member: member.session.customer, tokens: member.session.tokens, type: 'member' };
+  }
+
+  const cookie = parseCookies(req)[WIX_VISITOR_COOKIE];
+  const payload = verifyToken(cookie);
+  let sid = payload?.type === 'wix_visitor' ? payload.sid : '';
+  let session = sid ? loadWixSession(sid, 'visitor') : null;
+  if (!session) {
+    sid = `wix-vsess-${randomUUID()}`;
+    session = { tokens: await createVisitorCommerceSession(WIX_HEADLESS_CLIENT_ID), expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS };
+    saveWixSession(sid, 'visitor', session, session.expiresAt);
+    setVisitorSessionCookie(res, sid);
+  }
+  const client = createCommerceClient({
+    clientId: WIX_HEADLESS_CLIENT_ID,
+    tokens: session.tokens,
+    onTokens: tokens => {
+      session.tokens = tokens;
+      saveWixSession(sid, 'visitor', session, session.expiresAt);
+    },
+  });
+  return { client, member: null, tokens: session.tokens, type: 'visitor' };
+}
+
+function wixAccessToken(tokens) {
+  return tokens?.accessToken?.value || tokens?.access_token || '';
+}
+
 function readBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -396,6 +576,48 @@ function callStore(action, payload = {}) {
   return parsed.result;
 }
 
+const WIX_SESSION_KEY = createHash('sha256').update(AUTH_SECRET).digest();
+
+function encryptWixSession(value) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', WIX_SESSION_KEY, iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ciphertext.toString('base64url')}`;
+}
+
+function decryptWixSession(value) {
+  const [iv, tag, ciphertext] = String(value || '').split('.');
+  if (!iv || !tag || !ciphertext) return null;
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', WIX_SESSION_KEY, Buffer.from(iv, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    return JSON.parse(Buffer.concat([
+      decipher.update(Buffer.from(ciphertext, 'base64url')),
+      decipher.final(),
+    ]).toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveWixSession(sid, kind, value, expiresAt) {
+  callStore('save_wix_session', {
+    sid,
+    kind,
+    payload: encryptWixSession({ ...value, expiresAt }),
+    expires_at: new Date(expiresAt).toISOString(),
+  });
+}
+
+function loadWixSession(sid, kind) {
+  const row = callStore('get_wix_session', { sid, kind });
+  return row ? decryptWixSession(row.payload) : null;
+}
+
+function deleteWixSession(sid) {
+  callStore('delete_wix_session', { sid });
+}
+
 function signToken(payload) {
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signature = createHmac('sha256', AUTH_SECRET).update(body).digest('base64url');
@@ -415,7 +637,7 @@ function verifyToken(token) {
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
     if (!payload?.sid || !payload?.exp || payload.exp < Date.now()) return null;
-    if (payload.type !== 'csrf' && !payload?.email) return null;
+    if (!['csrf', 'wix_visitor'].includes(payload.type) && !payload?.email) return null;
     return payload;
   } catch {
     return null;
@@ -520,7 +742,7 @@ async function ensureSeeded() {
     },
   });
   callStore('seed_offers', { offers: DEFAULT_HERO_OFFERS });
-  syncSeoArtifacts();
+  await syncSeoArtifacts();
 }
 
 function currentTimeBody() {
@@ -536,10 +758,12 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
-function syncSeoArtifacts() {
+async function syncSeoArtifacts() {
   try {
     mkdirSync(PUBLIC_DIR, { recursive: true });
-    const products = callStore('list_products') || [];
+    const products = WIX_COMMERCE_ENABLED
+      ? (await getWixCatalog()).products
+      : (callStore('list_products') || []);
     const urls = [
       `${PUBLIC_SITE_URL}/`,
       `${PUBLIC_SITE_URL}/categories`,
@@ -551,14 +775,18 @@ function syncSeoArtifacts() {
         .trim()
         .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
         .replace(/^-+|-+$/g, '');
-      urls.push(`${PUBLIC_SITE_URL}/product/${slug || product.id}`);
+      const legacyPath = String(product.legacy_path || `/product-page/${slug || product.id}`);
+      urls.push(`${PUBLIC_SITE_URL}${legacyPath.startsWith('/') ? legacyPath : `/${legacyPath}`}`);
     }
     for (const post of BLOG_POSTS) {
       urls.push(`${PUBLIC_SITE_URL}/blog/${encodeURIComponent(post.slug)}`);
     }
+    for (const post of WIX_BLOG_POSTS) {
+      urls.push(new URL(post.path, `${PUBLIC_SITE_URL}/`).href);
+    }
     const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
-      urls.map(url => `  <url><loc>${escapeXml(url)}</loc><changefreq>weekly</changefreq><priority>${url.includes('/product/') ? '0.8' : '0.9'}</priority></url>`).join('\n') +
+      urls.map(url => `  <url><loc>${escapeXml(url)}</loc><changefreq>weekly</changefreq><priority>${url.includes('/product-page/') ? '0.8' : '0.9'}</priority></url>`).join('\n') +
       `\n</urlset>\n`;
     writeFileSync(join(PUBLIC_DIR, 'sitemap.xml'), sitemap, 'utf8');
     writeFileSync(
@@ -774,6 +1002,33 @@ async function handleCustomerRefresh(req, res) {
   const body = await readBody(req);
   const refreshToken = String(body.refresh_token || getTokenFromRequest(req, 'customer', 'refresh') || '').trim();
   const payload = verifyToken(refreshToken);
+  if (payload?.type === 'wix_customer_refresh') {
+    if (!verifyCsrfRequest(req, res, 'customer', payload)) return;
+    const session = loadWixSession(payload.sid, 'member');
+    if (!session) {
+      sendJson(res, 401, { error: 'Unauthorized' });
+      return;
+    }
+    const accessExp = Date.now() + ACCESS_TOKEN_TTL_MS;
+    const accessToken = signToken({
+      sid: payload.sid,
+      customer_id: session.customer.id,
+      email: session.customer.email,
+      type: 'wix_customer_access',
+      exp: accessExp,
+    });
+    const { token: csrfToken, csrfTtlMs } = issueCsrfToken('customer', payload.sid);
+    setAuthCookies(res, 'customer', {
+      accessToken,
+      refreshToken,
+      csrfToken,
+      accessTtlMs: ACCESS_TOKEN_TTL_MS,
+      refreshTtlMs: Math.max(0, session.expiresAt - Date.now()),
+      csrfTtlMs,
+    });
+    sendJson(res, 200, { access_token: accessToken, expires_at: new Date(accessExp).toISOString(), ...await getWixCustomerPayload(session.customer, session.tokens) });
+    return;
+  }
   if (!payload || payload.type !== 'customer_refresh') {
     sendJson(res, 401, { error: 'Unauthorized' });
     return;
@@ -821,6 +1076,12 @@ async function handleCustomerLogout(req, res) {
   const refreshToken = String(body.refresh_token || getTokenFromRequest(req, 'customer', 'refresh') || '').trim();
   const payload = verifyToken(refreshToken);
   if (payload && !verifyCsrfRequest(req, res, 'customer', payload)) return;
+  if (payload?.type === 'wix_customer_refresh') {
+    deleteWixSession(payload.sid);
+    clearAuthCookies(res, 'customer');
+    sendJson(res, 200, { ok: true });
+    return;
+  }
   if (payload?.sid) {
     callStore('revoke_customer_session', { sid: payload.sid });
   }
@@ -839,6 +1100,28 @@ function getCustomerPayload(customerId) {
     },
     orders,
     cart,
+  };
+}
+
+async function getWixCustomerPayload(customer, tokens) {
+  const client = createCommerceClient({ clientId: WIX_HEADLESS_CLIENT_ID, tokens });
+  const [orders, cart, loyalty] = await Promise.all([
+    getWixMemberOrders(customer.wix_member_id),
+    getCurrentWixCart(client),
+    getMemberLoyalty(client),
+  ]);
+  return {
+    customer: {
+      ...customer,
+      points: loyalty.points,
+      rewards: {
+        points: loyalty.points,
+        reward_available: loyalty.reward_available,
+        source: 'wix-loyalty',
+      },
+    },
+    orders,
+    cart: cart.items,
   };
 }
 
@@ -905,17 +1188,34 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathname === '/api/bootstrap') {
-      sendJson(res, 200, callStore('bootstrap'));
+      const localData = callStore('bootstrap');
+      const { orders: _orders, coupons: _coupons, ...nonCommerceData } = localData;
+      try {
+        const catalog = await getWixCatalog();
+        sendJson(res, 200, { ...nonCommerceData, products: catalog.products, catalog: { ...catalog, products: undefined } });
+      } catch (error) {
+        console.warn(`Wix catalog unavailable: ${error.message}`);
+        if (WIX_COMMERCE_ENABLED) throw new Error('Wix catalog is temporarily unavailable');
+        sendJson(res, 200, { ...nonCommerceData, catalog: { source: 'sqlite-development', product_count: localData.products?.length || 0 } });
+      }
       return;
     }
 
     if (req.method === 'GET' && pathname === '/api/products') {
-      sendJson(res, 200, callStore('list_products'));
+      try {
+        const catalog = await getWixCatalog();
+        sendJson(res, 200, catalog.products);
+      } catch (error) {
+        if (WIX_COMMERCE_ENABLED) throw new Error('Wix catalog is temporarily unavailable');
+        sendJson(res, 200, callStore('list_products'));
+      }
       return;
     }
 
     if (req.method === 'GET' && pathname === '/api/orders') {
-      sendJson(res, 200, callStore('list_orders'));
+      const payload = requireAdmin(req, res);
+      if (!payload) return;
+      sendJson(res, 200, WIX_COMMERCE_ENABLED ? await getAllWixOrders() : callStore('list_orders'));
       return;
     }
 
@@ -939,8 +1239,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'POST' && pathname === '/api/customer/google') {
-      await handleCustomerLogin(req, res);
+    if (req.method === 'POST' && pathname === '/api/customer/wix/start') {
+      const commerce = await getWixCommerceSession(req, res);
+      sendJson(res, 200, await startWixMemberLogin(wixAccessToken(commerce.tokens)));
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/customer/wix/callback') {
+      const body = await readBody(req);
+      const tokens = await finishWixMemberLogin({ code: String(body.code || ''), state: String(body.state || '') });
+      const member = await getWixMember(tokens.access_token);
+      const session = issueWixCustomerSession(res, member, tokens);
+      sendJson(res, 200, { ok: true, expires_at: session.expiresAt, ...await getWixCustomerPayload(session.customer, session.tokens) });
       return;
     }
 
@@ -962,6 +1272,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathname === '/api/customer/me') {
+      const wixSession = getWixCustomerSession(req, res);
+      if (wixSession) {
+        sendJson(res, 200, await getWixCustomerPayload(wixSession.session.customer, wixSession.session.tokens));
+        return;
+      }
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 401, { error: 'Sign in with Wix to access your account' });
+        return;
+      }
       const payload = requireCustomer(req, res);
       if (!payload) return;
       sendJson(res, 200, getCustomerPayload(payload.customer_id));
@@ -969,6 +1288,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathname === '/api/customer/orders') {
+      const wixSession = getWixCustomerSession(req, res);
+      if (wixSession) {
+        sendJson(res, 200, { orders: await getWixMemberOrders(wixSession.session.customer.wix_member_id) });
+        return;
+      }
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 401, { error: 'Sign in with Wix to view your orders' });
+        return;
+      }
       const payload = requireCustomer(req, res);
       if (!payload) return;
       sendJson(res, 200, { orders: callStore('get_customer_orders', { customer_id: payload.customer_id }) });
@@ -976,6 +1304,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathname === '/api/customer/cart') {
+      if (WIX_COMMERCE_ENABLED) {
+        const commerce = await getWixCommerceSession(req, res);
+        sendJson(res, 200, await getCurrentWixCart(commerce.client));
+        return;
+      }
       const payload = requireCustomer(req, res);
       if (!payload) return;
       sendJson(res, 200, { items: callStore('get_customer_cart', { customer_id: payload.customer_id }) });
@@ -983,6 +1316,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'PUT' && pathname === '/api/customer/cart') {
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 410, { error: 'Bulk local cart sync is disabled. Use Wix cart item endpoints.' });
+        return;
+      }
       const payload = requireCustomer(req, res);
       if (!payload) return;
       const body = await readBody(req);
@@ -996,6 +1333,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'DELETE' && pathname === '/api/customer/cart') {
+      if (WIX_COMMERCE_ENABLED) {
+        const commerce = await getWixCommerceSession(req, res);
+        sendJson(res, 200, await clearWixCart(commerce.client));
+        return;
+      }
       const payload = requireCustomer(req, res);
       if (!payload) return;
       callStore('clear_customer_cart', {
@@ -1003,6 +1345,71 @@ const server = http.createServer(async (req, res) => {
         _actor: { type: 'customer', id: payload.customer_id, email: payload.email },
       });
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/commerce/cart/items') {
+      const body = await readBody(req);
+      const commerce = await getWixCommerceSession(req, res);
+      sendJson(res, 200, await addWixCartItem(commerce.client, body.product_id, body.quantity, body.variant_id));
+      return;
+    }
+
+    if (req.method === 'PATCH' && pathname.startsWith('/api/commerce/cart/items/')) {
+      const body = await readBody(req);
+      const lineItemId = decodeURIComponent(pathname.split('/').pop());
+      const commerce = await getWixCommerceSession(req, res);
+      sendJson(res, 200, await updateWixCartItem(commerce.client, lineItemId, body.quantity));
+      return;
+    }
+
+    if (req.method === 'DELETE' && pathname.startsWith('/api/commerce/cart/items/')) {
+      const lineItemId = decodeURIComponent(pathname.split('/').pop());
+      const commerce = await getWixCommerceSession(req, res);
+      sendJson(res, 200, await removeWixCartItem(commerce.client, lineItemId));
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/commerce/cart/coupon') {
+      const body = await readBody(req);
+      const commerce = await getWixCommerceSession(req, res);
+      sendJson(res, 200, await applyWixCartCoupon(commerce.client, body.code));
+      return;
+    }
+
+    if (req.method === 'DELETE' && pathname === '/api/commerce/cart/coupon') {
+      const commerce = await getWixCommerceSession(req, res);
+      sendJson(res, 200, await removeWixCartCoupon(commerce.client));
+      return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/commerce/checkout') {
+      const commerce = await getWixCommerceSession(req, res);
+      sendJson(res, 200, await createWixCheckout(commerce.client));
+      return;
+    }
+
+    if (WIX_COMMERCE_ENABLED && pathname === '/api/coupons') {
+      sendJson(res, 409, { error: 'Coupons are managed in the Wix dashboard.' });
+      return;
+    }
+
+    if (WIX_COMMERCE_ENABLED && pathname.startsWith('/api/coupons/')) {
+      sendJson(res, 409, { error: 'Coupons are managed in the Wix dashboard.' });
+      return;
+    }
+
+    if (WIX_COMMERCE_ENABLED && req.method === 'PATCH' && pathname === '/api/customer/profile') {
+      sendJson(res, 409, { error: 'Customer profiles are managed by Wix Members.' });
+      return;
+    }
+
+    if (
+      WIX_COMMERCE_ENABLED &&
+      isUnsafeMethod(req.method) &&
+      (pathname === '/api/products/import' || pathname.startsWith('/api/products/'))
+    ) {
+      sendJson(res, 409, { error: 'Products, variants, prices, and inventory are managed in the Wix dashboard.' });
       return;
     }
 
@@ -1097,6 +1504,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && pathname === '/api/orders') {
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 409, { error: 'Direct order creation is disabled. Create orders through Wix checkout.' });
+        return;
+      }
       const body = await readBody(req);
       const customer = maybeCustomer(req, res);
       const order = callStore('create_order', {
@@ -1112,6 +1523,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'PATCH' && pathname.startsWith('/api/orders/')) {
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 409, { error: 'Orders and refunds are managed in the Wix dashboard.' });
+        return;
+      }
       const payload = requireAdmin(req, res);
       if (!payload) return;
       const id = pathname.split('/').pop();
@@ -1127,6 +1542,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && pathname === '/api/products') {
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 409, { error: 'Products and inventory are managed in the Wix dashboard.' });
+        return;
+      }
       const payload = requireAdmin(req, res);
       if (!payload) return;
       const body = await readBody(req);
@@ -1140,6 +1559,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'PUT' && pathname.startsWith('/api/products/')) {
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 409, { error: 'Products and inventory are managed in the Wix dashboard.' });
+        return;
+      }
       const payload = requireAdmin(req, res);
       if (!payload) return;
       const id = pathname.split('/').pop();
@@ -1155,6 +1578,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'DELETE' && pathname.startsWith('/api/products/')) {
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 409, { error: 'Products and inventory are managed in the Wix dashboard.' });
+        return;
+      }
       const payload = requireAdmin(req, res);
       if (!payload) return;
       const id = pathname.split('/').pop();
@@ -1165,6 +1592,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && pathname === '/api/products/import') {
+      if (WIX_COMMERCE_ENABLED) {
+        sendJson(res, 409, { error: 'Products and inventory are managed in the Wix dashboard.' });
+        return;
+      }
       const payload = requireAdmin(req, res);
       if (!payload) return;
       const body = await readBody(req);
@@ -1180,7 +1611,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && pathname === '/api/admin/analytics') {
       const payload = requireAdmin(req, res);
       if (!payload) return;
-      sendJson(res, 200, callStore('admin_analytics'));
+      sendJson(res, 200, WIX_COMMERCE_ENABLED ? await getWixCommerceAnalytics() : callStore('admin_analytics'));
       return;
     }
 

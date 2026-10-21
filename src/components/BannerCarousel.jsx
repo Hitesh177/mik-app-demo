@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { isChinesePath, localizedPath } from '../lib/storeRoutes';
 
 const SLIDES = [
   {
@@ -36,15 +38,24 @@ const SLIDES = [
     bg: 'from-teal-600 to-cyan-700',
     emoji: '🚚',
     tag: 'Limited Time',
-    title: 'Free Delivery\non Orders NT$999+',
-    sub: 'Taiwan-wide delivery to your door',
+    title: 'Free Delivery\non Orders Over NT$4,000',
+    sub: 'Shop more and enjoy delivery across Taiwan',
     cta: 'Shop Now',
     href: '/',
     accent: 'bg-white/20',
   },
 ];
 
+const ATTA_BANNER_IMAGES = [
+  '/products/4269f1c4c0bf7de00ebe.jpeg',
+  '/products/c3291bbb445eb5005123.jpg',
+  '/products/14acb4531895715a33cf.jpg',
+];
+
+const ATTA_BANNER_POSTER = '/banners/atta-weekend-poster.png';
+
 function normalizeOffer(offer) {
+  const href = offer.href || '/';
   return {
     bg: offer.bg || `${offer.bg_from || 'from-green-700'} ${offer.bg_to || 'to-green-900'}`,
     emoji: offer.emoji || '✨',
@@ -52,13 +63,17 @@ function normalizeOffer(offer) {
     title: offer.title || '',
     sub: offer.subtitle || offer.sub || '',
     cta: offer.cta_label || offer.cta || 'Shop Now',
-    href: offer.href || '/',
+    href,
+    images: offer.images || (href === '/flour-rice-pulses' ? ATTA_BANNER_IMAGES : []),
+    poster: offer.poster || (href === '/flour-rice-pulses' ? ATTA_BANNER_POSTER : ''),
     accent: offer.accent || 'bg-white/20',
     active: offer.active === undefined ? true : Boolean(offer.active),
   };
 }
 
 export default function BannerCarousel({ offers = [] }) {
+  const { pathname } = useLocation();
+  const isZh = isChinesePath(pathname);
   const [current, setCurrent] = useState(0);
   const [paused, setPaused] = useState(false);
   const sourceSlides = offers && offers.length > 0 ? offers : SLIDES;
@@ -104,17 +119,48 @@ export default function BannerCarousel({ offers = [] }) {
             </h2>
             <p className="text-white/80 text-sm mt-2 max-w-xs">{slide.sub}</p>
             <a
-              href={slide.href}
+              href={localizedPath(slide.href, isZh)}
               aria-label={slide.cta}
               className="inline-block mt-4 bg-white text-gray-900 font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-gray-100 hover:-translate-y-0.5 active:scale-95 transition-all duration-200"
             >
               {slide.cta} →
             </a>
           </div>
-          {/* Emoji */}
-          <div className="text-7xl sm:text-8xl select-none flex-shrink-0 hidden sm:block animate-img-fade" key={current}>
-            {slide.emoji}
-          </div>
+          {slide.poster ? (
+            <div className="relative hidden sm:flex w-80 h-52 flex-shrink-0 items-center justify-center animate-img-fade" key={current}>
+              <div className="absolute inset-x-4 bottom-1 h-8 rounded-[50%] bg-black/20 blur-xl" />
+              <div className="absolute right-4 top-2 w-28 h-28 rounded-full bg-yellow-100/35 blur-3xl" />
+              <img
+                src={slide.poster}
+                alt="Aashirvaad, Pillsbury and Prima atta flour offer"
+                className="relative z-10 h-full w-full object-contain drop-shadow-2xl transition-transform duration-500 hover:-translate-y-1 hover:scale-[1.02]"
+                style={{
+                  WebkitMaskImage: 'radial-gradient(ellipse at center, black 68%, transparent 100%)',
+                  maskImage: 'radial-gradient(ellipse at center, black 68%, transparent 100%)',
+                }}
+              />
+            </div>
+          ) : slide.images?.length ? (
+            <div className="relative hidden sm:block w-72 h-48 flex-shrink-0 animate-img-fade" key={current} aria-label="Aashirvaad, Pillsbury and Prima atta flour" role="img">
+              <div className="absolute inset-x-2 bottom-0 h-8 rounded-[50%] bg-black/15 blur-xl" />
+              <div className="absolute right-1 top-1 w-20 h-20 rounded-full bg-yellow-200/30 blur-2xl" />
+              {slide.images.map((src, index) => (
+                <img
+                  key={src}
+                  src={src}
+                  alt=""
+                  aria-hidden="true"
+                  className={`absolute bottom-1 h-[88%] w-[48%] object-contain drop-shadow-2xl transition-transform duration-500 hover:-translate-y-1 ${
+                    index === 0 ? 'left-2 z-30 -rotate-3' : index === 1 ? 'left-[30%] z-20 rotate-2' : 'right-0 z-10 rotate-6'
+                  }`}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-7xl sm:text-8xl select-none flex-shrink-0 hidden sm:block animate-img-fade" key={current}>
+              {slide.emoji}
+            </div>
+          )}
         </div>
       </div>
 

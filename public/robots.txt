@@ -3,4 +3,4 @@ Allow: /
 Disallow: /admin
 Disallow: /checkout
 Disallow: /account
-Sitemap: http://127.0.0.1:5173/sitemap.xml
+Sitemap: https://www.indianstoretaiwan.com/sitemap.xml

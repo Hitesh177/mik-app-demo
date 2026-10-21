@@ -7,7 +7,6 @@ export function CustomerProvider({ children }) {
   const [customer, setCustomer] = useState(null);
   const [orders, setOrders] = useState([]);
   const [isReady, setIsReady] = useState(false);
-  const [loading, setLoading] = useState(false);
 
   const refreshCustomer = async () => {
     try {
@@ -45,18 +44,6 @@ export function CustomerProvider({ children }) {
     };
   }, []);
 
-  const signInWithGoogle = async (credential) => {
-    setLoading(true);
-    try {
-      const result = await api.googleLoginCustomer(credential);
-      setCustomer(result.customer || null);
-      setOrders(Array.isArray(result.orders) ? result.orders : []);
-      return result;
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const logout = async () => {
     await api.logoutCustomer();
     setCustomer(null);
@@ -81,9 +68,7 @@ export function CustomerProvider({ children }) {
       customer,
       orders,
       isReady,
-      loading,
       isLoggedIn: Boolean(customer),
-      signInWithGoogle,
       logout,
       updateProfile,
       refreshCustomer,

@@ -1,5 +1,5 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, ShieldCheck, Truck, RotateCcw, FileText, HelpCircle } from 'lucide-react';
+import { ArrowLeft, MessageCircle, ShieldCheck, FileText, HelpCircle } from 'lucide-react';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import BottomNav from '../components/BottomNav';
@@ -41,44 +41,6 @@ const CONTENT = {
       {
         heading: 'Account usage',
         body: 'Please keep your account details accurate so your orders, rewards, and delivery updates stay synced correctly across devices.',
-      },
-    ],
-  },
-  shipping: {
-    title: 'Shipping & Delivery',
-    description: 'Delivery timing, service area, and order handling for MIK Store.',
-    icon: Truck,
-    sections: [
-      {
-        heading: 'Service area',
-        body: 'MIK Store focuses on Indian grocery delivery for customers across Taiwan, including Taipei and nearby delivery zones where service is available.',
-      },
-      {
-        heading: 'Order processing',
-        body: 'Orders move through placed, confirmed, packed, shipped, and fulfilled states so customers can track progress from the account area.',
-      },
-      {
-        heading: 'Delivery updates',
-        body: 'We recommend keeping your phone number and address updated so delivery communication reaches you quickly if a courier needs help.',
-      },
-    ],
-  },
-  returns: {
-    title: 'Returns Policy',
-    description: 'How to request help if an item arrives damaged or incorrect.',
-    icon: RotateCcw,
-    sections: [
-      {
-        heading: 'If something is wrong',
-        body: 'If your order arrives damaged or incorrect, contact us as soon as possible with your order number and a short description of the issue.',
-      },
-      {
-        heading: 'Review process',
-        body: 'We review return or refund requests on a case-by-case basis and may ask for photos or order details before taking action.',
-      },
-      {
-        heading: 'Fast support',
-        body: 'The fastest way to reach us is through the support options shown on the order confirmation page or through customer account contact details.',
       },
     ],
   },
@@ -125,8 +87,6 @@ const CONTENT = {
 const ROUTE_MAP = {
   privacy: '/privacy',
   terms: '/terms',
-  shipping: '/shipping',
-  returns: '/returns',
   faq: '/faq',
   contact: '/contact',
 };
@@ -146,7 +106,7 @@ export default function InfoPage({ slug: propSlug }) {
       <SeoHead
         title={pageTitle}
         description={content.description}
-        canonical={typeof window !== 'undefined' ? `${window.location.origin}${ROUTE_MAP[slug]}` : undefined}
+        canonical={typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname || ROUTE_MAP[slug]}` : undefined}
         ogType="website"
       />
 

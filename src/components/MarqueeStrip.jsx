@@ -1,5 +1,5 @@
 const ITEMS = [
-  '🚚 Free delivery on orders NT$999+',
+  '🚚 Free Taiwan-wide delivery on orders over NT$4,000',
   '🌶️ 200+ authentic Indian products',
   '🇮🇳 Direct import from India',
   '⭐ Trusted by 1000+ customers in Taiwan',

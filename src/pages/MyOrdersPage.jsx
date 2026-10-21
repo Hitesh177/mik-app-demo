@@ -110,7 +110,7 @@ export default function MyOrdersPage() {
             </div>
             <div>
               <p className="font-semibold text-gray-700">Sign in to see your orders</p>
-              <p className="text-gray-400 text-sm mt-1">Your order history is linked to your Google account and synced across devices.</p>
+              <p className="text-gray-400 text-sm mt-1">Your order history is securely synced from your Wix member account.</p>
             </div>
             <button
               onClick={() => navigate('/account')}
@@ -153,8 +153,9 @@ export default function MyOrdersPage() {
               <div className="space-y-3">
                 {myOrders.map(order => {
                   const isOpen = expanded === order.id;
-                  const labelMap = {
-                    pending: 'Placed',
+const labelMap = {
+  placed: 'Placed',
+  pending: 'Placed',
                     confirmed: 'Confirmed',
                     packed: 'Packed',
                     shipped: 'On the way',
@@ -239,14 +240,20 @@ export default function MyOrdersPage() {
                           )}
                           {order.discount_amount > 0 && (
                             <div className="flex justify-between text-sm text-amber-700">
-                              <span>Loyalty discount</span>
+                            <span>Wix discount</span>
                               <span>-{formatMoney(order.discount_amount)}</span>
                             </div>
                           )}
                           <div className="flex justify-between text-sm text-gray-500">
-                            <span>Points earned</span>
-                            <span>{order.points_earned || 0}</span>
+                            <span>Payment</span>
+                            <span className="capitalize">{String(order.payment_status || 'Pending').replaceAll('_', ' ').toLowerCase()}</span>
                           </div>
+                          {order.shipping > 0 && (
+                            <div className="flex justify-between text-sm text-gray-500">
+                              <span>Shipping</span>
+                              <span>{formatMoney(order.shipping)}</span>
+                            </div>
+                          )}
                           <div className="border-t pt-2 flex justify-between font-bold text-gray-900">
                             <span>Total</span>
                             <span>{formatMoney(order.total)}</span>

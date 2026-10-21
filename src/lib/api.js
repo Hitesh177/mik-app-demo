@@ -53,7 +53,7 @@ async function request(path, {
     if (
       res.status === 401 &&
       retryOnAuth &&
-      !['/admin/login', '/admin/refresh', '/admin/logout', '/customer/google', '/customer/refresh', '/customer/logout'].includes(path)
+      !['/admin/login', '/admin/refresh', '/admin/logout', '/customer/refresh', '/customer/logout'].includes(path)
     ) {
       const refreshed = await refreshSession(scope);
       if (refreshed?.ok !== false) {
@@ -122,15 +122,8 @@ export const api = {
   updateOffer: (id, updates) => request(`/offers/${id}`, { method: 'PUT', body: updates, scope: 'admin' }),
   deleteOffer: (id) => request(`/offers/${id}`, { method: 'DELETE', scope: 'admin' }),
 
-  googleLoginCustomer: async (credential) => {
-    const data = await request('/customer/google', {
-      method: 'POST',
-      body: { credential },
-      retryOnAuth: false,
-      scope: 'customer',
-    });
-    return data;
-  },
+  startWixLogin: () => request('/customer/wix/start', { method: 'POST', retryOnAuth: false, scope: 'customer' }),
+  finishWixLogin: (code, state) => request('/customer/wix/callback', { method: 'POST', body: { code, state }, retryOnAuth: false, scope: 'customer' }),
   refreshCustomerSession: () => refreshSession('customer'),
   logoutCustomer: async () => {
     await request('/customer/logout', {
@@ -142,8 +135,13 @@ export const api = {
   getCustomerMe: () => request('/customer/me', { scope: 'customer' }),
   getCustomerOrders: () => request('/customer/orders', { scope: 'customer' }),
   getCustomerCart: () => request('/customer/cart', { scope: 'customer' }),
-  saveCustomerCart: (items) => request('/customer/cart', { method: 'PUT', body: { items }, scope: 'customer' }),
   clearCustomerCart: () => request('/customer/cart', { method: 'DELETE', scope: 'customer' }),
+  addCartItem: (productId, quantity = 1, variantId = '') => request('/commerce/cart/items', { method: 'POST', body: { product_id: productId, quantity, variant_id: variantId }, scope: 'customer' }),
+  updateCartItem: (lineItemId, quantity) => request(`/commerce/cart/items/${encodeURIComponent(lineItemId)}`, { method: 'PATCH', body: { quantity }, scope: 'customer' }),
+  removeCartItem: (lineItemId) => request(`/commerce/cart/items/${encodeURIComponent(lineItemId)}`, { method: 'DELETE', scope: 'customer' }),
+  applyCartCoupon: (code) => request('/commerce/cart/coupon', { method: 'POST', body: { code }, scope: 'customer' }),
+  removeCartCoupon: () => request('/commerce/cart/coupon', { method: 'DELETE', scope: 'customer' }),
+  createWixCheckout: () => request('/commerce/checkout', { method: 'POST', scope: 'customer' }),
   updateCustomerProfile: (updates) => request('/customer/profile', { method: 'PATCH', body: updates, scope: 'customer' }),
   getAdminAnalytics: () => request('/admin/analytics', { scope: 'admin' }),
   getAdminAuditLogs: (limit = 25) => request(`/admin/audit-logs?limit=${encodeURIComponent(limit)}`, { scope: 'admin' }),

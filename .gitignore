@@ -25,3 +25,4 @@ server/data/*.sqlite-journal
 *.sln
 *.sw?
 .vercel
+artifacts/

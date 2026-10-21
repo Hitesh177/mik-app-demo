@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useReducer, useState, useCallback } from 'react';
 import { api } from '../lib/api';
 import { useCustomer } from './CustomerContext';
 
@@ -7,17 +7,18 @@ const CartContext = createContext(null);
 function cartReducer(state, action) {
   switch (action.type) {
     case 'ADD_ITEM': {
-      const existing = state.find(i => i.id === action.product.id);
+      const key = action.product.cart_key || `${action.product.id}:${action.product.variant_id || ''}`;
+      const existing = state.find(i => (i.cart_key || `${i.id}:${i.variant_id || ''}`) === key);
       if (existing) {
-        return state.map(i => (i.id === action.product.id ? { ...i, quantity: i.quantity + 1 } : i));
+        return state.map(i => ((i.cart_key || `${i.id}:${i.variant_id || ''}`) === key ? { ...i, quantity: i.quantity + 1 } : i));
       }
-      return [...state, { ...action.product, quantity: 1 }];
+      return [...state, { ...action.product, cart_key: key, quantity: 1 }];
     }
     case 'REMOVE_ITEM':
-      return state.filter(i => i.id !== action.id);
+      return state.filter(i => (i.cart_key || i.id) !== action.id);
     case 'UPDATE_QTY':
-      if (action.qty <= 0) return state.filter(i => i.id !== action.id);
-      return state.map(i => (i.id === action.id ? { ...i, quantity: action.qty } : i));
+      if (action.qty <= 0) return state.filter(i => (i.cart_key || i.id) !== action.id);
+      return state.map(i => ((i.cart_key || i.id) === action.id ? { ...i, quantity: action.qty } : i));
     case 'CLEAR':
       return [];
     case 'INIT':
@@ -27,105 +28,33 @@ function cartReducer(state, action) {
   }
 }
 
-function guestStorageKey() {
-  return 'mik_cart_guest';
-}
-
-function customerStorageKey(customerId) {
-  return `mik_cart_customer_${customerId}`;
-}
-
-function safeReadStorage(key) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function safeWriteStorage(key, cart) {
-  try {
-    localStorage.setItem(key, JSON.stringify(cart));
-  } catch {
-    // Ignore storage failures and keep the in-memory cart usable.
-  }
-}
-
-function mergeCarts(primary, secondary) {
-  const map = new Map();
-  for (const item of [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])]) {
-    if (!item?.id) continue;
-    const existing = map.get(item.id);
-    const quantity = Number(item.quantity || 1);
-    if (existing) {
-      existing.quantity += quantity;
-    } else {
-      map.set(item.id, { ...item, quantity });
-    }
-  }
-  return [...map.values()];
-}
-
-function normalizeServerCart(items) {
-  return (Array.isArray(items) ? items : []).map(item => ({
-    ...item,
-    id: item.id || item.product_id,
-    quantity: Number(item.quantity || 1),
-  }));
-}
-
 export function CartProvider({ children }) {
-  const { customer, isLoggedIn, isReady: customerReady } = useCustomer();
+  const { customer, isReady: customerReady } = useCustomer();
   const [cart, dispatch] = useReducer(cartReducer, []);
   const [toast, setToast] = useState(null);
-  const hydratedRef = useRef(false);
-  const activeCustomerKey = useMemo(
-    () => (isLoggedIn && customer?.id ? customerStorageKey(customer.id) : guestStorageKey()),
-    [isLoggedIn, customer?.id],
-  );
+  const [syncError, setSyncError] = useState('');
+  const [cartSummary, setCartSummary] = useState({ subtotal: 0, total: 0, discount: 0, coupon: null });
+
+  const syncCanonicalCart = useCallback((response) => {
+    dispatch({ type: 'INIT', cart: response.items || [] });
+    setCartSummary({
+      subtotal: Number(response.subtotal || 0),
+      total: Number(response.total || 0),
+      discount: Number(response.discount || 0),
+      coupon: response.coupon || null,
+    });
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
     async function bootstrap() {
-      hydratedRef.current = false;
       if (!customerReady) return;
-
-      if (isLoggedIn && customer?.id) {
-        const guestCart = safeReadStorage(guestStorageKey());
-        const customerCartKey = customerStorageKey(customer.id);
-        let serverCart = [];
-        try {
-          const response = await api.getCustomerCart();
-          serverCart = normalizeServerCart(response.items || []);
-        } catch {
-          serverCart = safeReadStorage(customerCartKey);
-        }
-        const merged = mergeCarts(serverCart, guestCart);
-        if (!mounted) return;
-        dispatch({ type: 'INIT', cart: merged });
-        safeWriteStorage(customerCartKey, merged);
-        if (guestCart.length > 0) {
-          try {
-            localStorage.removeItem(guestStorageKey());
-          } catch {
-            // Ignore storage cleanup issues.
-          }
-        }
-        try {
-          await api.saveCustomerCart(merged);
-        } catch {
-          // If sync is unavailable, keep the local cart so the app still works.
-        }
-      } else {
-        dispatch({ type: 'INIT', cart: safeReadStorage(guestStorageKey()) });
-      }
-
-      if (mounted) {
-        hydratedRef.current = true;
+      try {
+        const response = await api.getCustomerCart();
+        if (mounted) syncCanonicalCart(response);
+      } catch (error) {
+        if (mounted) setSyncError(error.message || 'Could not load the Wix cart');
       }
     }
 
@@ -133,35 +62,67 @@ export function CartProvider({ children }) {
     return () => {
       mounted = false;
     };
-  }, [isLoggedIn, customer?.id, customerReady]);
-
-  useEffect(() => {
-    if (!hydratedRef.current) return;
-    safeWriteStorage(activeCustomerKey, cart);
-    if (!isLoggedIn || !customer?.id) return;
-    api.saveCustomerCart(cart).catch(() => {
-      // Best-effort sync; the UI should remain responsive even if the network blips.
-    });
-  }, [cart, activeCustomerKey, isLoggedIn, customer?.id]);
+  }, [customer?.id, customerReady, syncCanonicalCart]);
 
   const showToast = useCallback((product) => {
     setToast({ product, id: Date.now() });
     setTimeout(() => setToast(null), 2500);
   }, []);
 
-  const addItem = (product) => {
-    dispatch({ type: 'ADD_ITEM', product });
-    showToast(product);
+  const addItem = (product, variantId = product.variant_id || '') => {
+    setSyncError('');
+    return api.addCartItem(product.wix_product_id || product.id, 1, variantId)
+      .then(response => {
+        syncCanonicalCart(response);
+        showToast(product);
+      })
+      .catch(error => {
+        setSyncError(error.message || 'Could not update the Wix cart');
+        api.getCustomerCart().then(syncCanonicalCart).catch(() => {});
+      });
   };
-  const removeItem = (id) => dispatch({ type: 'REMOVE_ITEM', id });
-  const updateQty = (id, qty) => dispatch({ type: 'UPDATE_QTY', id, qty });
-  const clearCart = () => dispatch({ type: 'CLEAR' });
+  const removeItem = (id) => {
+    const item = cart.find(entry => (entry.cart_key || entry.id) === id);
+    dispatch({ type: 'REMOVE_ITEM', id });
+    if (!item?.wix_line_item_id) return;
+    api.removeCartItem(item.wix_line_item_id)
+      .then(syncCanonicalCart)
+      .catch(error => setSyncError(error.message || 'Could not update the Wix cart'));
+  };
+  const updateQty = (id, qty) => {
+    const item = cart.find(entry => (entry.cart_key || entry.id) === id);
+    if (qty <= 0) {
+      removeItem(id);
+      return;
+    }
+    dispatch({ type: 'UPDATE_QTY', id, qty });
+    if (!item?.wix_line_item_id) return;
+    api.updateCartItem(item.wix_line_item_id, qty)
+      .then(syncCanonicalCart)
+      .catch(error => setSyncError(error.message || 'Could not update the Wix cart'));
+  };
+  const clearCart = () => {
+    dispatch({ type: 'CLEAR' });
+    return api.clearCustomerCart().then(syncCanonicalCart).catch(error => setSyncError(error.message || 'Could not clear the Wix cart'));
+  };
+
+  const applyCoupon = (code) => api.applyCartCoupon(code).then(response => {
+    syncCanonicalCart(response);
+    setSyncError('');
+    return response;
+  });
+  const removeCoupon = () => api.removeCartCoupon().then(response => {
+    syncCanonicalCart(response);
+    setSyncError('');
+    return response;
+  });
 
   const totalItems = cart.reduce((sum, i) => sum + i.quantity, 0);
-  const totalPrice = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const itemSubtotal = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const totalPrice = cartSummary.total || itemSubtotal;
 
   return (
-    <CartContext.Provider value={{ cart, addItem, removeItem, updateQty, clearCart, totalItems, totalPrice, toast }}>
+    <CartContext.Provider value={{ cart, addItem, removeItem, updateQty, clearCart, applyCoupon, removeCoupon, cartSummary, totalItems, totalPrice, toast, syncError }}>
       {children}
     </CartContext.Provider>
   );

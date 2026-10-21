@@ -211,15 +211,16 @@ export default function AdminProductFormPage() {
             </select>
           </div>
 
-          {/* Image URL */}
+          {/* Local image path */}
           <div>
-            <label className="text-sm font-medium text-gray-700 block mb-1">Image URL (Optional)</label>
+            <label className="text-sm font-medium text-gray-700 block mb-1">Local image path (Optional)</label>
             <input
               className="input-field"
-              placeholder="https://example.com/image.jpg"
+              placeholder="/products/item.webp"
               value={form.image_url}
               onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))}
             />
+            <p className="text-xs text-gray-500 mt-1">External image URLs are blocked. Store product images in the app first.</p>
           </div>
 
           <div className="space-y-4 pt-1">

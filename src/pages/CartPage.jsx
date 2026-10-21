@@ -1,11 +1,41 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import BottomNav from '../components/BottomNav';
-import { ArrowLeft, Plus, Minus, Trash2, ShoppingBag, Truck } from 'lucide-react';
+import { ArrowLeft, Plus, Minus, Trash2, ShoppingBag, Truck, Ticket, X } from 'lucide-react';
 
 export default function CartPage() {
-  const { cart, updateQty, removeItem, totalPrice, totalItems } = useCart();
+  const { cart, updateQty, removeItem, applyCoupon, removeCoupon, cartSummary, totalPrice, totalItems, syncError } = useCart();
   const navigate = useNavigate();
+  const [couponCode, setCouponCode] = useState('');
+  const [couponError, setCouponError] = useState('');
+  const [couponLoading, setCouponLoading] = useState(false);
+
+  const submitCoupon = async (event) => {
+    event.preventDefault();
+    setCouponLoading(true);
+    setCouponError('');
+    try {
+      await applyCoupon(couponCode);
+      setCouponCode('');
+    } catch (error) {
+      setCouponError(error.message || 'This coupon is not valid for your Wix cart');
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const clearCoupon = async () => {
+    setCouponLoading(true);
+    setCouponError('');
+    try {
+      await removeCoupon();
+    } catch (error) {
+      setCouponError(error.message || 'Could not remove this coupon');
+    } finally {
+      setCouponLoading(false);
+    }
+  };
 
   if (cart.length === 0) {
     return (
@@ -47,7 +77,7 @@ export default function CartPage() {
       <div className="flex-1 max-w-2xl w-full mx-auto px-4 py-4 space-y-3 pb-36">
         {/* Free delivery progress bar */}
         {(() => {
-          const threshold = 999;
+          const threshold = 4000;
           const pct = Math.min(100, (totalPrice / threshold) * 100);
           const remaining = Math.max(0, threshold - totalPrice);
           return (
@@ -74,8 +104,10 @@ export default function CartPage() {
 
         {/* Cart items */}
         <div className="bg-white rounded-2xl border border-gray-100 divide-y divide-gray-50">
-          {cart.map(item => (
-            <div key={item.id} className="flex items-center gap-3 p-4">
+          {cart.map(item => {
+            const itemKey = item.cart_key || item.id;
+            return (
+            <div key={itemKey} className="flex items-center gap-3 p-4">
               {/* Image */}
               <div className="w-14 h-14 bg-gray-100 rounded-xl flex-shrink-0 overflow-hidden">
                 {item.image_url
@@ -88,28 +120,58 @@ export default function CartPage() {
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-sm text-gray-800 leading-snug">{item.name_en}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{item.name_zh}</p>
+                {item.selected_options?.length > 0 && (
+                  <p className="mt-0.5 text-xs text-gray-500">{item.selected_options.map(option => option.value || option.name).join(' · ')}</p>
+                )}
                 <p className="font-bold text-green-700 text-sm mt-1">NT${(item.price * item.quantity).toLocaleString()}</p>
               </div>
 
               {/* Quantity controls */}
               <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-2 py-1.5">
-                <button onClick={() => updateQty(item.id, item.quantity - 1)} className="text-gray-600">
+                <button onClick={() => updateQty(itemKey, item.quantity - 1)} className="text-gray-600">
                   <Minus size={14} />
                 </button>
                 <span className="font-bold text-sm w-5 text-center">{item.quantity}</span>
-                <button onClick={() => updateQty(item.id, item.quantity + 1)} className="text-gray-600">
+                <button onClick={() => updateQty(itemKey, item.quantity + 1)} className="text-gray-600">
                   <Plus size={14} />
                 </button>
               </div>
 
               <button
-                onClick={() => removeItem(item.id)}
+                onClick={() => removeItem(itemKey)}
                 className="p-1.5 text-gray-400 hover:text-red-500"
               >
                 <Trash2 size={16} />
               </button>
             </div>
-          ))}
+          )})}
+        </div>
+
+        <div className="rounded-2xl border border-gray-100 bg-white p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Ticket size={17} className="text-green-700" />
+            <h2 className="font-semibold text-gray-800">Wix coupon</h2>
+          </div>
+          {cartSummary.coupon ? (
+            <div className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50 px-3 py-2.5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-green-700">Applied</p>
+                <p className="font-bold text-green-900">{cartSummary.coupon.code}</p>
+              </div>
+              <button onClick={clearCoupon} disabled={couponLoading} aria-label="Remove coupon" className="rounded-lg p-2 text-green-800 hover:bg-green-100 disabled:opacity-50">
+                <X size={18} />
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={submitCoupon} className="flex gap-2">
+              <input value={couponCode} onChange={event => setCouponCode(event.target.value)} placeholder="Enter coupon code" autoCapitalize="characters" className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm uppercase outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100" />
+              <button disabled={couponLoading || !couponCode.trim()} className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40">
+                {couponLoading ? 'Checking...' : 'Apply'}
+              </button>
+            </form>
+          )}
+          {(couponError || syncError) && <p className="mt-2 text-sm text-red-600">{couponError || syncError}</p>}
+          <p className="mt-2 text-xs text-gray-400">Rules, expiry, eligibility, and limits are checked live by Wix.</p>
         </div>
 
         {/* Order summary */}
@@ -118,8 +180,11 @@ export default function CartPage() {
           <div className="space-y-2 text-sm">
             <div className="flex justify-between text-gray-600">
               <span>Subtotal ({totalItems} items)</span>
-              <span>NT${totalPrice.toLocaleString()}</span>
+              <span>NT${Number(cartSummary.subtotal || totalPrice).toLocaleString()}</span>
             </div>
+            {cartSummary.discount > 0 && (
+              <div className="flex justify-between font-medium text-green-700"><span>Wix discount</span><span>-NT${cartSummary.discount.toLocaleString()}</span></div>
+            )}
             <div className="flex justify-between text-gray-600">
               <span>Delivery</span>
               <span className="text-green-700 font-medium">FREE</span>

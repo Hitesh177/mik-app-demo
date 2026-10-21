@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import CategoryGrid from '../components/CategoryGrid';
+import { sortCategoriesWithOthersLast } from '../lib/categoryOrdering';
 import ProductCard from '../components/ProductCard';
 import Footer from '../components/Footer';
 import BottomNav from '../components/BottomNav';
@@ -9,19 +10,36 @@ import BannerCarousel from '../components/BannerCarousel';
 import MarqueeStrip from '../components/MarqueeStrip';
 import Testimonials from '../components/Testimonials';
 import SeoHead from '../components/SeoHead';
-import { CATEGORIES, PRODUCTS } from '../data/mockData';
 import { BLOG_POSTS } from '../data/blogPosts';
 import { useAdmin } from '../context/AdminContext';
-import { ChevronRight, Flame, Tag, TrendingUp, Search, Sparkles, MapPin, BookOpen } from 'lucide-react';
+import { categoryPath, isChinesePath, localizedPath } from '../lib/storeRoutes';
+import { searchProducts } from '../lib/search';
+import { ChevronLeft, ChevronRight, Flame, Tag, TrendingUp, Search, Sparkles, MapPin, BookOpen } from 'lucide-react';
 
-const SECTION_CATEGORIES = CATEGORIES.filter(c => c.id !== 'all');
+const hasRealPrice = product => Number.isFinite(Number(product?.price)) && Number(product.price) > 0;
+
+const ORDER_GUIDES = [
+  {
+    src: '/banners/how-to-order-pay.png',
+    alt: 'How to order and pay at MIK Store, with ordering steps and customer support details in English and Traditional Chinese',
+  },
+  {
+    src: '/banners/delivery-options-guide.png',
+    alt: 'MIK Store delivery guide showing same-day delivery within 5 km, delivery charges, and free-delivery thresholds across Taiwan in English and Traditional Chinese',
+  },
+  {
+    src: '/banners/how-to-order-pay-illustrated.png',
+    alt: 'Illustrated MIK Store ordering and payment guide in English and Traditional Chinese',
+  },
+];
 
 function RecentlyViewed() {
   const [viewed, setViewed] = useState([]);
   useEffect(() => {
     const load = () => {
       try {
-        setViewed(JSON.parse(localStorage.getItem('mik_viewed') || '[]'));
+        const storedProducts = JSON.parse(localStorage.getItem('mik_viewed') || '[]');
+        setViewed(Array.isArray(storedProducts) ? storedProducts.filter(hasRealPrice) : []);
       } catch {
         // Ignore malformed storage data and fall back to an empty recent list.
       }
@@ -221,7 +239,7 @@ function BlogHighlights() {
 function CategorySection({ category, products, onViewAll }) {
   // First 15 products — Hot-badged first, then rest
   const categoryProducts = products
-    .filter(p => p.category === category.id)
+    .filter(product => product.collection_ids?.includes(category.id))
     .sort((a, b) => (b.badge === 'Hot' ? 1 : 0) - (a.badge === 'Hot' ? 1 : 0))
     .slice(0, 15);
 
@@ -233,7 +251,7 @@ function CategorySection({ category, products, onViewAll }) {
       <div className="flex items-center justify-between px-4 max-w-6xl mx-auto mb-3">
         <h2 className="text-base font-bold text-gray-900">{category.name}</h2>
         <button
-          onClick={() => onViewAll(category.id)}
+          onClick={() => onViewAll(category.path || category.slug)}
           className="flex items-center gap-0.5 text-xs font-semibold text-green-700 hover:text-green-800 transition-colors"
         >
           see all <ChevronRight size={14} />
@@ -251,7 +269,7 @@ function CategorySection({ category, products, onViewAll }) {
           {/* "View all" card at the end */}
           <div className="w-36 sm:w-40 flex-none">
             <button
-              onClick={() => onViewAll(category.id)}
+              onClick={() => onViewAll(category.path || category.slug)}
               className="w-full h-full min-h-[180px] rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center gap-2 text-gray-500 hover:border-green-400 hover:text-green-700 transition-colors bg-white"
             >
               <ChevronRight size={24} />
@@ -266,27 +284,28 @@ function CategorySection({ category, products, onViewAll }) {
 
 export default function HomePage() {
   const [search, setSearch] = useState('');
+  const [orderGuideIndex, setOrderGuideIndex] = useState(0);
   const navigate = useNavigate();
-  const { offers } = useAdmin();
+  const { pathname } = useLocation();
+  const isZh = isChinesePath(pathname);
+  const { categories, offers, products: PRODUCTS } = useAdmin();
+  const pricedProducts = PRODUCTS.filter(hasRealPrice);
   const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const canonicalPath = typeof window !== 'undefined' ? window.location.pathname : '/';
   const seoDescription = 'Shop authentic Indian groceries in Taiwan with fast delivery, live product pages, and easy browsing for spices, dal, ready-to-eat meals, rice, oils, and more.';
+  const currentOrderGuide = ORDER_GUIDES[orderGuideIndex];
 
   const handleSearchChange = (val) => setSearch(val);
 
   // When searching, show a flat filtered list instead of sections
-  const searchResults = search.trim()
-    ? PRODUCTS.filter(p =>
-        p.name_en.toLowerCase().includes(search.toLowerCase()) ||
-        p.name_zh.includes(search)
-      )
-    : null;
+  const searchResults = search.trim() ? searchProducts(pricedProducts, search) : null;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <SeoHead
         title="MIK Store | Indian Grocery Delivery in Taiwan"
         description={seoDescription}
-        canonical={siteUrl ? `${siteUrl}/` : undefined}
+        canonical={siteUrl ? `${siteUrl}${canonicalPath}` : undefined}
         keywords="Indian grocery Taiwan, Indian supermarket Taiwan, chana dal Taiwan, spices Taiwan, ready to eat Indian food, Indian delivery Taipei"
         ogType="website"
         jsonLd={{
@@ -298,7 +317,9 @@ export default function HomePage() {
         }}
       />
 
-      <Header onSearchChange={handleSearchChange} searchValue={search} searchIndex={PRODUCTS} />
+      <Header onSearchChange={handleSearchChange} searchValue={search} searchIndex={pricedProducts} />
+
+      <h1 className="sr-only">Authentic Indian groceries delivered across Taiwan</h1>
 
       {/* Marquee strip */}
       {!search.trim() && <MarqueeStrip />}
@@ -307,7 +328,7 @@ export default function HomePage() {
       {!search.trim() && <BannerCarousel offers={offers} />}
 
       {/* Deals of the Day */}
-      {!search.trim() && <DealsOfDay products={PRODUCTS} />}
+      {!search.trim() && <DealsOfDay products={pricedProducts} />}
 
       {/* Search results OR browse experience */}
       {searchResults ? (
@@ -333,16 +354,56 @@ export default function HomePage() {
         <>
           {/* Category Grid */}
           <CategoryGrid
-            onCategorySelect={(catId) => navigate(`/category/${catId}`)}
+            categories={categories}
+            isZh={isZh}
+            onCategorySelect={(catId) => navigate(localizedPath(categoryPath(catId), isZh))}
           />
 
+          <section className="mx-auto mt-6 w-full max-w-6xl px-4" aria-label="How to order, pay, and receive delivery">
+            <div className="relative overflow-hidden rounded-2xl border border-amber-100 bg-white shadow-sm">
+              <button
+                type="button"
+                onClick={() => setOrderGuideIndex(current => (current + 1) % ORDER_GUIDES.length)}
+                className="group block w-full text-left focus:outline-none focus-visible:ring-4 focus-visible:ring-green-500/40"
+                aria-label={`Show next order and delivery guide. Currently showing guide ${orderGuideIndex + 1} of ${ORDER_GUIDES.length}.`}
+              >
+              <img
+                src={currentOrderGuide.src}
+                alt={currentOrderGuide.alt}
+                className="h-auto w-full object-contain transition-transform duration-300 group-hover:scale-[1.01]"
+                loading="lazy"
+                decoding="async"
+              />
+              <span className="absolute bottom-3 right-3 rounded-full bg-white/90 px-3 py-1.5 text-xs font-bold text-gray-800 shadow-sm">
+                Tap to view next guide ({orderGuideIndex + 1}/{ORDER_GUIDES.length})
+              </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderGuideIndex(current => (current - 1 + ORDER_GUIDES.length) % ORDER_GUIDES.length)}
+                className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-2 text-gray-800 shadow-md transition hover:bg-white focus:outline-none focus-visible:ring-4 focus-visible:ring-green-500/40"
+                aria-label="Show previous order and delivery guide"
+              >
+                <ChevronLeft size={24} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderGuideIndex(current => (current + 1) % ORDER_GUIDES.length)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/90 p-2 text-gray-800 shadow-md transition hover:bg-white focus:outline-none focus-visible:ring-4 focus-visible:ring-green-500/40"
+                aria-label="Show next order and delivery guide"
+              >
+                <ChevronRight size={24} aria-hidden="true" />
+              </button>
+            </div>
+          </section>
+
           <div className="pb-28">
-            {SECTION_CATEGORIES.map(category => (
+            {sortCategoriesWithOthersLast(categories.filter(category => category.slug !== 'all-products' && category.product_count > 0)).map(category => (
               <CategorySection
                 key={category.id}
                 category={category}
-                products={PRODUCTS}
-                onViewAll={(catId) => navigate(`/category/${catId}`)}
+                products={pricedProducts}
+                onViewAll={(catId) => navigate(localizedPath(categoryPath(catId), isZh))}
               />
             ))}
           </div>
@@ -362,7 +423,7 @@ export default function HomePage() {
           </div>
           <div className="overflow-x-auto no-scrollbar px-4">
             <div className="flex gap-3 w-max">
-              {[...products].sort((a, b) => b.price - a.price).slice(0, 10).map(product => (
+              {[...pricedProducts].sort((a, b) => b.price - a.price).slice(0, 10).map(product => (
                 <div key={product.id} className="w-36 sm:w-40 flex-none">
                   <ProductCard product={product} compact />
                 </div>
@@ -372,10 +433,36 @@ export default function HomePage() {
         </section>
       )}
 
+      {!search.trim() && (
+        <section className="mx-auto mt-10 w-full max-w-6xl px-4" aria-labelledby="store-film-title">
+          <div className="overflow-hidden rounded-[2rem] bg-[#10140f] p-3 shadow-[0_24px_60px_rgba(19,33,17,0.24)] sm:p-5">
+            <div className="mb-4 flex flex-col gap-2 px-1 text-white sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.28em] text-amber-300">MIK Store presents</p>
+                <h2 id="store-film-title" className="mt-1 font-serif text-2xl font-bold sm:text-3xl">A Taste of Home in Taiwan</h2>
+              </div>
+              <p className="text-sm text-stone-300">The MIK Store film · 3:58</p>
+            </div>
+            <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black">
+              <video
+                className="aspect-video w-full"
+                controls
+                playsInline
+                preload="metadata"
+                aria-label="MIK Store brand film: Online Indian Grocery Store in Taiwan"
+              >
+                <source src="/media/mik-store-film.mp4" type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Testimonials */}
       {!search.trim() && <Testimonials />}
 
-      {!search.trim() && <PopularSearches products={PRODUCTS} />}
+      {!search.trim() && <PopularSearches products={pricedProducts} />}
 
       {!search.trim() && <BlogHighlights />}
 
