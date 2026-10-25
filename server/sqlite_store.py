@@ -3,12 +3,13 @@ import datetime as dt
 import hashlib
 import json
 import sqlite3
+import os
 import sys
 import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DB_PATH = ROOT / 'data' / 'mik.sqlite'
+DB_PATH = Path('/tmp/mik.sqlite') if os.environ.get('VERCEL') else ROOT / 'data' / 'mik.sqlite'
 
 
 def utc_now_iso():

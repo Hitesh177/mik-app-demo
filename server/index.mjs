@@ -742,7 +742,7 @@ async function ensureSeeded() {
     },
   });
   callStore('seed_offers', { offers: DEFAULT_HERO_OFFERS });
-  await syncSeoArtifacts();
+  if (!process.env.VERCEL) await syncSeoArtifacts();
 }
 
 function currentTimeBody() {
@@ -1156,7 +1156,7 @@ function enforceRequestGuards(req, res, pathname) {
   return true;
 }
 
-const server = http.createServer(async (req, res) => {
+export async function handleRequest(req, res) {
   applyResponseHeaders(req, res);
 
   if (req.method === 'OPTIONS') {
@@ -1188,6 +1188,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathname === '/api/bootstrap') {
+      if (process.env.VERCEL) {
+        const catalog = await getWixCatalog();
+        sendJson(res, 200, {
+          products: catalog.products,
+          orders: [],
+          coupons: [],
+          offers: DEFAULT_HERO_OFFERS,
+          catalog: { ...catalog, products: undefined },
+        });
+        return;
+      }
       const localData = callStore('bootstrap');
       const { orders: _orders, coupons: _coupons, ...nonCommerceData } = localData;
       try {
@@ -1220,7 +1231,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && pathname === '/api/offers') {
-      sendJson(res, 200, callStore('list_offers'));
+      sendJson(res, 200, process.env.VERCEL ? DEFAULT_HERO_OFFERS : callStore('list_offers'));
       return;
     }
 
@@ -1631,10 +1642,25 @@ const server = http.createServer(async (req, res) => {
     const statusCode = error.statusCode || 500;
     sendJson(res, statusCode, { error: error.message || 'Internal server error' });
   }
-});
+}
 
-await ensureSeeded();
+let readyPromise;
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`MIK backend listening on http://127.0.0.1:${PORT}`);
-});
+async function ensureReady() {
+  if (process.env.VERCEL) return;
+  if (!readyPromise) readyPromise = ensureSeeded();
+  await readyPromise;
+}
+
+export default async function handler(req, res) {
+  await ensureReady();
+  return handleRequest(req, res);
+}
+
+if (!process.env.VERCEL) {
+  await ensureReady();
+  const server = http.createServer(handleRequest);
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`MIK backend listening on http://127.0.0.1:${PORT}`);
+  });
+}
